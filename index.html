@@ -102,7 +102,7 @@ var H=LJ("h",SH),A=LJ("a",SA),O=LJ("o",SO),B=LJ("b",SB),ux=LJ("ux",1.39005),lr=L
 var gistId=LJ("gistId",""),ghToken=LJ("ghToken",""),theme=LJ("theme","dark");
 var gmailClientId=LJ("gmailCid",""),gmailToken=LJ("gmailTk","");
 var pendingTrades=LJ("pendT",[]),arTimer=null,syncBusy=false;
-var sortK="pc",sortD="asc",editI=-1,srch="",fTyp="all",fAct="all";
+var sortK="pc",sortD="asc",editI=-1,srch="",fTyp="all",fAct="all",curTab="summary";
 document.documentElement.setAttribute("data-theme",theme);
 
 // ═══ HELPERS ═══
@@ -211,9 +211,9 @@ function calc(){var R=[],i,j;for(i=0;i<H.length;i++){var h=H[i],r=h.t==="U"?ux:1
 
 // ═══ NAV ═══
 var TABS=[["summary","\ud83d\udcca Summary"],["portfolio","\ud83d\udcbc Holdings"],["trades","\ud83d\udce8 Trades"+(pendingTrades.length?" ("+pendingTrades.length+")":"")],["budget","\ud83d\udccb Budget"],["dividends","\ud83d\udcb0 Dividends"],["other","\ud83c\udfe6 Other"],["accounts","\u2699 Accounts"],["settings","\ud83d\udd27 Settings"]];
-function initNav(){var h="";for(var i=0;i<TABS.length;i++)h+='<button class="nb'+(i===0?" on":"")+'" data-t="'+TABS[i][0]+'" onclick="go(this.dataset.t)">'+TABS[i][1]+"</button>";document.getElementById("nv").innerHTML=h}
-function updNav(){TABS[2][1]="\ud83d\udce8 Trades"+(pendingTrades.length?" ("+pendingTrades.length+")":"");initNav();var active=document.querySelector(".nb.on");if(!active)document.querySelector('.nb[data-t="summary"]').classList.add("on")}
-function go(t){var bs=document.querySelectorAll(".nb");for(var i=0;i<bs.length;i++)bs[i].classList.toggle("on",bs[i].dataset.t===t);var ps=document.querySelectorAll(".tp");for(i=0;i<ps.length;i++)ps[i].classList.toggle("on",ps[i].id==="t-"+t);editI=-1;({summary:rS,portfolio:rP,trades:rTr,budget:rB,dividends:rD,other:rO,accounts:rA,settings:rSet})[t]?.()}
+function initNav(){var h="";for(var i=0;i<TABS.length;i++)h+='<button class="nb'+(TABS[i][0]===curTab?" on":"")+'" data-t="'+TABS[i][0]+'" onclick="go(this.dataset.t)">'+TABS[i][1]+"</button>";document.getElementById("nv").innerHTML=h}
+function updNav(){TABS[2][1]="\ud83d\udce8 Trades"+(pendingTrades.length?" ("+pendingTrades.length+")":"");initNav()}
+function go(t){curTab=t;var bs=document.querySelectorAll(".nb");for(var i=0;i<bs.length;i++)bs[i].classList.toggle("on",bs[i].dataset.t===t);var ps=document.querySelectorAll(".tp");for(i=0;i<ps.length;i++)ps[i].classList.toggle("on",ps[i].id==="t-"+t);editI=-1;({summary:rS,portfolio:rP,trades:rTr,budget:rB,dividends:rD,other:rO,accounts:rA,settings:rSet})[t]?.()}
 function crd(t,v,sub,co,lnk){return'<div class="c lnk fi" onclick="go(\''+lnk+'\')"><div class="lb">'+t+' \u2192</div><div class="vl" style="color:'+co+'">'+v+'</div><div class="sl" style="color:'+co+'">'+sub+"</div></div>"}
 
 // ═══ SUMMARY ═══
