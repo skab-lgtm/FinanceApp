@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no,viewport-fit=cover">
-<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Finance">
 <meta name="theme-color" content="#05080f">
@@ -97,14 +97,30 @@ input:focus,select:focus{border-color:var(--ac)}
 // All data loads from localStorage / GitHub Gist
 // ═══════════════════════════════════════════════════════
 
+// Empty defaults — real data comes from Gist sync
 var SA=[];var SH=[];var SRE=[];var SO=[];
 var SB={items:{},actuals:{},takeHome:0};
 var DV={DFN:0.3221,TD:1.09,BNS:1.117,ENB:0.9918,"DFN-A":0.1787,XEQT:0.1813,"FCD-UN":0.134,BMO:1.71,VFV:0.4077,"NWH-UN":0.0924,"BEP-UN":0.5535,TF:0.1797,"DIR-UN":0.1787,T:0.4425,CPX:0.7083,WCP:0.1823,"QQC-T":0.041,"REI-UN":0.2893,NA:1.2825,CNQ:0.625,CM:1.09,GSY:1.6347,NPI:0.18,MFC:0.44,PFE:0.42,QQQ:0.52};
 
 // ═══ STATE ═══
-function LJ(k,f){try{var v=localStorage.getItem("fc_"+k);return v?JSON.parse(v):JSON.parse(JSON.stringify(f))}catch(e){return JSON.parse(JSON.stringify(f))}}
+function LJ(k,f){
+  try {
+    var v = localStorage.getItem("fc_"+k);
+    if(!v) return f;
+    return JSON.parse(v);
+  } catch(e) {
+    console.error("Error parsing key: " + k, e);
+    return f;
+  }
+}
 function SJ(k,v){try{localStorage.setItem("fc_"+k,JSON.stringify(v))}catch(e){}}
-var H=LJ("h",SH),A=LJ("a",SA),O=LJ("o",SO),B=LJ("b",SB),RE=LJ("r",SRE),ux=LJ("ux",1.39005),lr=LJ("lr",null);
+
+var H=LJ("h",SA),A=LJ("a",SA),O=LJ("o",SO),B=LJ("b",SB),RE=LJ("r",SRE),lr=LJ("lr",null);
+// Robust initialization for ux (USD/CAD rate)
+var storedUx = localStorage.getItem("fc_ux");
+var ux = storedUx ? parseFloat(JSON.parse(storedUx)) : 1.39005;
+if(isNaN(ux)) ux = 1.39005;
+
 var gistId=LJ("gistId",""),ghToken=LJ("ghToken",""),theme=LJ("theme","dark");
 var gmailClientId=LJ("gmailCid",""),gmailToken=LJ("gmailTk","");
 var pendingTrades=LJ("pendT",[]),arTimer=null,syncBusy=false;
@@ -156,11 +172,7 @@ function calc(){var R=[],i,j;for(i=0;i<H.length;i++){var h=H[i],r=h.t==="U"?ux:1
 // ═══ NAV ═══
 var TABS=[["summary","📊 Summary"],["portfolio","💼 Holdings"],["resp","🎓 RESP"],["trades","📨 Trades"],["budget","📋 Budget"],["dividends","💰 Dividends"],["other","🏦 Other"],["accounts","⚙ Accounts"],["audit","📜 Audit"],["settings","🔧 Settings"]];
 function initNav(){var h="";for(var i=0;i<TABS.length;i++){var label=TABS[i][1];if(TABS[i][0]==="trades"&&pendingTrades.length)label+=" ("+pendingTrades.length+")";if(TABS[i][0]==="audit"&&auditLog.length)label+=" ("+auditLog.length+")";h+='<button class="nb'+(TABS[i][0]===curTab?" on":"")+'" data-t="'+TABS[i][0]+'" onclick="go(this.dataset.t)">'+label+"</button>"}document.getElementById("nv").innerHTML=h}
-function go(t){
-  curTab=t;initNav();var ps=document.querySelectorAll(".tp");for(var i=0;i<ps.length;i++)ps[i].classList.toggle("on",ps[i].id==="t-"+t);editI=-1;
-  var fns = {summary:rS,portfolio:rP,resp:rResp,trades:rTr,budget:rB,dividends:rD,other:rO,accounts:rA,audit:rAudit,settings:rSet};
-  if(fns[t]) fns[t]();
-}
+function go(t){curTab=t;initNav();var ps=document.querySelectorAll(".tp");for(var i=0;i<ps.length;i++)ps[i].classList.toggle("on",ps[i].id==="t-"+t);editI=-1;({summary:rS,portfolio:rP,resp:rResp,trades:rTr,budget:rB,dividends:rD,other:rO,accounts:rA,audit:rAudit,settings:rSet})[t]?.()}
 function crd(t,v,sub,co,lnk){return'<div class="c lnk fi" onclick="go(\''+lnk+'\')"><div class="lb">'+t+' →</div><div class="vl" style="color:'+co+'">'+v+'</div><div class="sl" style="color:'+co+'">'+sub+"</div></div>"}
 
 // ═══ SUMMARY ═══
@@ -176,7 +188,7 @@ function rS(){
 
 function showSetupWizard(){document.getElementById("t-summary").innerHTML='<div class="wizard"><div style="font-size:40px;margin-bottom:10px">🏦</div><h2>Welcome to Financial Command Center</h2><p>Connect your GitHub Gist to load your portfolio data, or start fresh by adding holdings manually.</p><div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap"><button class="b bp" onclick="go(\'settings\')">⚙ Connect GitHub Gist</button><button class="b" onclick="go(\'portfolio\')">+ Add Holdings Manually</button></div></div>'}
 
-// ═══ PORTFOLIO ═══
+// ═══ PORTFOLIO (with transaction sub-rows) ═══
 var pSearch="",pFTyp="all",pFAct="all";
 function rP(){
   var c=calc();var fl=c.R.slice();
@@ -187,6 +199,7 @@ function rP(){
   var atypes=[];for(var x=0;x<A.length;x++)if(atypes.indexOf(A[x].tp)<0)atypes.push(A[x].tp);
 
   var h='<div class="c" style="margin-bottom:8px"><div class="lb">Add Trade</div><div style="display:grid;grid-template-columns:repeat(6,1fr) auto;gap:4px;align-items:end"><div class="fg"><label class="fl">Symbol</label><input id="ts" placeholder="AAPL" style="text-transform:uppercase"></div><div class="fg"><label class="fl">Curr</label><select id="tt"><option value="C">CAD</option><option value="U">USD</option></select></div><div class="fg"><label class="fl">Cost</label><input id="tc2" type="number" step="0.01"></div><div class="fg"><label class="fl">Qty</label><input id="tn" type="number" step="0.01"></div><div class="fg"><label class="fl">Account</label><select id="ta">'+acOpts()+'</select></div><div class="fg"><label class="fl">Type</label><select id="tk"><option>Growth</option><option>Dividend</option><option>ETF</option></select></div><button class="b bp" onclick="addTrade()">+</button></div></div>';
+
   h+='<div class="sb"><input id="psq" placeholder="🔍 Search..." value="'+esc(pSearch)+'" onkeyup="pSearch=this.value;rPTable()" onchange="pSearch=this.value;rPTable()"><select onchange="pFTyp=this.value;rP()"><option value="all">All Types</option><option'+(pFTyp==="Growth"?" selected":"")+'>Growth</option><option'+(pFTyp==="Dividend"?" selected":"")+'>Dividend</option><option'+(pFTyp==="ETF"?" selected":"")+'>ETF</option></select><select onchange="pFAct=this.value;rP()"><option value="all">All Accts</option>';
   for(x=0;x<atypes.length;x++)h+='<option'+(pFAct===atypes[x]?" selected":"")+'>'+atypes[x]+"</option>";
   h+='</select><span class="sl" style="margin-left:auto">'+fl.length+'</span></div>';
@@ -210,7 +223,7 @@ function rPTable(){
     var kc=kco(r.k);
     var txns=getTxns(r.s,r.a);
     var hasExp=expanded[r.s+"_"+r.a];
-    h+="<tr><td style='font-weight:600;color:var(--ac)'>"+(txns.length?'<span class="txn-toggle" onclick="expanded[\''+r.s+'_'+r.a+'\']=!expanded[\''+r.s+'_'+r.a+'\'];rPTable()">'+(hasExp?"▼":"▶")+" </span>":"")+r.s+(r.t==="U"?"<sup style='font-size:7px;color:var(--mt);margin-left:1px'>USD</sup>":"")+"</td><td>$"+F(r.lp)+"</td><td>"+F(r.n,r.n%1?2:0)+"</td><td>$"+F(r.c)+"</td><td>$"+F(r.cc,0)+"</td><td>$"+F(r.vc,0)+"</td><td class='"+pcl(r.d)+"'>"+(r.d>=0?"+":"-")+"$"+F(Math.abs(r.d),0)+"</td><td class='"+pcl(r.pc)+"'>"+FP(r.pc)+'</td><td><span class="bg" style="background:var(--bl)22;color:var(--bl)">'+r.a+'</span></td><td><span class="bg" style="background:'+kc+"22;color:"+kc+'">'+r.k+"</span></td><td><button class='b bs' onclick='editI="+r._i+";rPTable()'>✎</button></td><td><button class='b bs br' onclick='rmTrade("+r._i+")'>×</button></td></tr>";
+    h+="<tr><td style='font-weight:600;color:var(--ac)'>"+(txns.length?'<span class="txn-toggle" onclick="expanded[\' '+r.s+"_"+r.a+'\']=!expanded[\' '+r.s+"_"+r.a+'\'];rPTable()">'+(hasExp?"▼":"▶")+" </span>":"")+r.s+(r.t==="U"?"<sup style='font-size:7px;color:var(--mt);margin-left:1px'>USD</sup>":"")+"</td><td>$"+F(r.lp)+"</td><td>"+F(r.n,r.n%1?2:0)+"</td><td>$"+F(r.c)+"</td><td>$"+F(r.cc,0)+"</td><td>$"+F(r.vc,0)+"</td><td class='"+pcl(r.d)+"'>"+(r.d>=0?"+":"-")+"$"+F(Math.abs(r.d),0)+"</td><td class='"+pcl(r.pc)+"'>"+FP(r.pc)+'</td><td><span class="bg" style="background:var(--bl)22;color:var(--bl)">'+r.a+'</span></td><td><span class="bg" style="background:'+kc+"22;color:"+kc+'">'+r.k+"</span></td><td><button class='b bs' onclick='editI="+r._i+";rPTable()'>✎</button></td><td><button class='b bs br' onclick='rmTrade("+r._i+")'>×</button></td></tr>";
     if(hasExp&&txns.length){for(var ti=0;ti<txns.length;ti++){var tx=txns[ti];h+='<tr class="txn-row"><td style="padding-left:20px;color:var(--mt)">↳ '+new Date(tx.date).toLocaleDateString()+'</td><td colspan="2" style="color:'+(tx.action==="Buy"?"var(--gn)":"var(--rd)")+'">'+tx.action+" "+tx.shares+"</td><td>@$"+F(tx.price)+"</td><td colspan="5" style="color:var(--mt)">'+esc(tx.acct)+'</td><td colspan="2"><button class="b bs br" onclick="rmTxn(\''+tx.id+'\','+r._i+')">×</button></td></tr>'}}
   }
   h+="</tbody></table></div>";
@@ -237,7 +250,7 @@ function saveEdit(i){H[i]={s:(document.getElementById("es").value||"").trim().to
 // ═══ TRADE APPROVAL ═══
 function approveTrade(idx){var tr=pendingTrades[idx];if(!tr)return;addTxn(tr.symbol,tr.action,tr.shares,tr.price,tr.acctId,"trades",tr.msgId);if(tr.action==="Sell"){var fi=-1;for(var i=0;i<H.length;i++){if(H[i].s===tr.symbol&&H[i].a===tr.acctId){fi=i;break}}if(fi>=0){H[fi].n=Math.max(0,H[fi].n-tr.shares);if(H[fi].n<=0)H.splice(fi,1)}}else{var fi2=-1;for(var i2=0;i2<H.length;i2++){if(H[i2].s===tr.symbol&&H[i2].a===tr.acctId){fi2=i2;break}}if(fi2>=0){var o=H[fi2],tn=o.n+tr.shares;H[fi2]={s:tr.symbol,t:"C",c:+((o.c*o.n+tr.price*tr.shares)/tn).toFixed(4),n:tn,a:tr.acctId,k:o.k,p:tr.price}}else H.push({s:tr.symbol,t:"C",c:tr.price,n:tr.shares,a:tr.acctId,k:"ETF",p:tr.price})}pendingTrades.splice(idx,1);save();toast(tr.action+" "+tr.shares+" "+tr.symbol);rTr();rS()}
 function skipTrade(idx){auditAdd("skipped_trade",pendingTrades[idx]);pendingTrades.splice(idx,1);save();rTr()}
-function editPendingTrade(idx){var tr=pendingTrades[idx];var sym=prompt("Symbol:",tr.symbol);if(!sym)return;var shares=Number(prompt("Shares:",tr.shares));if(!shares)return;var price=Number(prompt("Price:",tr.price));if(!price)return;var acctId=prompt("Account ID:",tr.acctId)||tr.acctId;pendingTrades[idx]=Object.assign({}, tr, {symbol:sym.toUpperCase(),shares:shares,price:price,total:shares*price,acctId:acctId});save();rTr()}
+function editPendingTrade(idx){var tr=pendingTrades[idx];var sym=prompt("Symbol:",tr.symbol);if(!sym)return;var shares=Number(prompt("Shares:",tr.shares));if(!shares)return;var price=Number(prompt("Price:",tr.price));if(!price)return;var acctId=prompt("Account ID:",tr.acctId)||tr.acctId;pendingTrades[idx]={...tr,symbol:sym.toUpperCase(),shares:shares,price:price,total:shares*price,acctId:acctId};save();rTr()}
 
 function rTr(){initNav();var h='<div class="c" style="margin-bottom:8px"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><div><div style="font-size:13px;font-weight:600">WealthSimple Trade Detection</div><div class="sl" style="margin-top:2px">Scans Gmail for "order filled" emails</div></div><button class="b bp" onclick="scanGmail()">📨 Scan Gmail</button></div></div>';
   if(pendingTrades.length){h+='<div style="font-size:12px;font-weight:600;color:var(--gl);margin-bottom:6px">'+pendingTrades.length+' pending:</div>';for(var i=0;i<pendingTrades.length;i++){var tr=pendingTrades[i];var existing=null;for(var j=0;j<H.length;j++){if(H[j].s===tr.symbol&&H[j].a===tr.acctId){existing=H[j];break}}h+='<div class="trade-card fi"><div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="font-weight:700;font-size:14px;color:'+(tr.action==="Sell"?"var(--rd)":"var(--gn)")+'">'+tr.action.toUpperCase()+'</span><span class="sl">'+esc(tr.date)+'</span></div>';h+='<div class="sr"><span class="sl">Symbol</span><span style="font-weight:600;color:var(--ac)">'+tr.symbol+'</span></div><div class="sr"><span class="sl">Shares</span><span class="mn" style="font-weight:600">'+tr.shares+'</span></div><div class="sr"><span class="sl">Price</span><span class="mn" style="font-weight:600">$'+F(tr.price)+'</span></div><div class="sr"><span class="sl">Account</span><span>'+esc(tr.account)+' → '+esc(tr.acctId)+'</span></div>';if(existing){var nN=existing.n+tr.shares,nC=+((existing.c*existing.n+tr.price*tr.shares)/nN).toFixed(2);h+='<div style="margin-top:4px;padding:5px 7px;border-radius:4px;background:var(--ac2);font-size:10px;color:var(--ac)">Existing: '+existing.n+'sh @$'+F(existing.c)+' → After: '+nN+'sh @$'+F(nC)+'</div>'}h+='<div style="display:flex;gap:4px;margin-top:6px;justify-content:flex-end"><button class="b bp bs" onclick="approveTrade('+i+')">✓ Approve</button><button class="b bs" onclick="editPendingTrade('+i+')">✎ Edit</button><button class="b bs br" onclick="skipTrade('+i+')">✕ Skip</button></div></div>'}}
@@ -256,7 +269,7 @@ function rmResp(i){auditAdd("resp_holding",RE[i]);toast("Removed "+RE[i].s);RE.s
 function saveRespEdit(i){RE[i]={s:(document.getElementById("res").value||"").trim().toUpperCase(),t:"C",c:parseFloat(document.getElementById("rec").value)||0,n:parseFloat(document.getElementById("ren").value)||0,p:parseFloat(document.getElementById("rep").value)||RE[i].p,a:"RESP Joint WS",k:"ETF"};respEditI=-1;save();toast("Saved");rResp();rS()}
 
 // ═══ BUDGET ═══
-function rB(){var pl=0,ac=0,keys=Object.keys(B.items);for(var i=0;i<keys.length;i++)pl+=B.items[keys[i]];var akeys=Object.keys(B.actuals);for(i=0;i<akeys.length;i++)ac+=B.actuals[akeys[i]];var va=pl-ac;var h='<div class="g g3"><div class="c"><div class="lb">Planned</div><div class="vl" style="color:var(--ac)">$'+F(pl,0)+'</div></div><div class="c"><div class="lb">Actual</div><div class="vl" style="color:var(--gl)">$'+F(ac,0)+'</div></div><div class="c"><div class="lb">Variance</div><div class="vl" style="color:'+plc(va)+'">'+(va>=0?"+":"-")+"$"+F(Math.abs(va),0)+'</div><div class="sl" style="color:'+plc(va)+'">'+(ac>pl?"Over":"Under")+" budget</div></div></div><div class='c'><div style='display:flex;justify-content:space-between;margin-bottom:6px'><div style='font-size:13px;font-weight:600'>Budget vs Actuals</div><button class='b bs' onclick='addBud()'>+ Add</button></div><div style='display:grid;grid-template-columns:1fr 1fr;gap:4px'>";for(i=0;i<keys.length;i++){var k=keys[i],v=B.items[k],a2=B.actuals[k]||0,ov=a2>v;h+='<div class="bi"><label>'+esc(k)+'</label><div style="text-align:center"><div style="font-size:6px;color:var(--mt)">Plan</div><input type="number" value="'+v+'" onchange="B.items[\''+esc(k).replace(/'/g,"\\'")+'\']= Number(this.value);save();rB()"></div><div style="text-align:center"><div style="font-size:6px;color:'+(ov?"var(--rd)":"var(--gn)")+'">Act</div><input type="number" value="'+(a2||"")+'" placeholder="0" onchange="B.actuals[\''+esc(k).replace(/'/g,"\\'")+'\']= Number(this.value);save();rB()" style="border-color:'+(ov?"var(--rd)":"var(--bd)")+'"></div><button class="b bs br" onclick="auditAdd(\'budget\',{name:\''+esc(k).replace(/'/g,"\\'")+'\',amt:'+v+'});delete B.items[\''+esc(k).replace(/'/g,"\\'")+'\'];delete B.actuals[\''+esc(k).replace(/'/g,"\\'")+'\'];save();rB()" style="padding:0 3px;font-size:7px">×</button></div>'}h+="</div></div>";document.getElementById("t-budget").innerHTML=h}
+function rB(){var pl=0,ac=0,keys=Object.keys(B.items);for(var i=0;i<keys.length;i++)pl+=B.items[keys[i]];var akeys=Object.keys(B.actuals);for(i=0;i<akeys.length;i++)ac+=B.actuals[akeys[i]];var va=pl-ac;var h='<div class="g g3"><div class="c"><div class="lb">Planned</div><div class="vl" style="color:var(--ac)">$'+F(pl,0)+'</div></div><div class="c"><div class="lb">Actual</div><div class="vl" style="color:var(--gl)">$'+F(ac,0)+'</div></div><div class="c"><div class="lb">Variance</div><div class="vl" style="color:'+plc(va)+'">'+(va>=0?"+":"-")+"$"+F(Math.abs(va),0)+'</div><div class="sl" style="color:'+plc(va)+'">'+(ac>pl?"Over":"Under")+" budget</div></div></div><div class=\'c\'><div style=\'display:flex;justify-content:space-between;margin-bottom:6px\'><div style=\'font-size:13px;font-weight:600\'>Budget vs Actuals</div><button class=\'b bs\' onclick=\'addBud()\'>+ Add</button></div><div style=\'display:grid;grid-template-columns:1fr 1fr;gap:4px\'>";for(i=0;i<keys.length;i++){var k=keys[i],v=B.items[k],a2=B.actuals[k]||0,ov=a2>v;h+='<div class="bi"><label>'+esc(k)+'</label><div style="text-align:center"><div style="font-size:6px;color:var(--mt)">Plan</div><input type="number" value="'+v+'" onchange="B.items[\''+esc(k).replace(/'/g,"\\'")+'\']= Number(this.value);save();rB()"></div><div style="text-align:center"><div style="font-size:6px;color:'+(ov?"var(--rd)":"var(--gn)")+'">Act</div><input type="number" value="'+(a2||"")+'" placeholder="0" onchange="B.actuals[\''+esc(k).replace(/'/g,"\\'")+'\']= Number(this.value);save();rB()" style="border-color:'+(ov?"var(--rd)":"var(--bd)")+'"></div><button class="b bs br" onclick="auditAdd(\'budget\',{name:\''+esc(k).replace(/'/g,"\\'")+'\',amt:'+v+'});delete B.items[\''+esc(k).replace(/'/g,"\\'")+'\'];delete B.actuals[\''+esc(k).replace(/'/g,"\\'")+'\'];save();rB()" style="padding:0 3px;font-size:7px">×</button></div>'}h+="</div></div>";document.getElementById("t-budget").innerHTML=h}
 function addBud(){var n=prompt("Expense:");if(!n)return;var a=Number(prompt("Budget:"));if(!a)return;B.items[n]=a;save();rB()}
 
 // ═══ DIVIDENDS ═══
@@ -306,7 +319,7 @@ function rSet(){
   document.getElementById("t-settings").innerHTML=h}
 
 // ═══ PRICES ═══
-async function refreshPrices(){var btn=document.getElementById("rbtn");if(btn){btn.disabled=true;btn.textContent="⟳ ..."}var syms={};for(var i=0;i<H.length;i++){var s=H[i].s.replace(".TO","");syms[H[i].t==="U"?s:s+".TO"]=1}for(i=0;i<RE.length;i++){syms[RE[i].s+".TO"]=1}syms["CADUSD=X"]=1;var list=Object.keys(syms);var done=0,ok=0,fail=0;var pp=document.getElementById("pp"),ps=document.getElementById("ps");if(ps)ps.textContent="Fetching "+list.length+"...";for(var b=0;b<list.length;b+=5){var batch=list.slice(b,b+5);var proms=batch.map(function(sym){return fetch("https://api.allorigins.win/raw?url="+encodeURIComponent("https://query1.finance.yahoo.com/v8/finance/chart/"+encodeURIComponent(sym)+"?interval=1d&range=1d")).then(function(r){return r.json()}).then(function(d){var p=d&&d.chart&&d.chart.result&&d.chart.result[0]&&d.chart.result[0].meta&&d.chart.result[0].meta.regularMarketPrice;if(p){if(sym==="CADUSD=X"){ux=1/p;SJ("ux",ux)}else{var cs=sym.replace(".TO","");for(var j=0;j<H.length;j++){if(H[j].s===cs||H[j].s===cs+".TO")H[j].p=p}for(j=0;j<RE.length;j++){if(RE[j].s===cs)RE[j].p=p}}ok++}else fail++}).catch(function(){fail++}).finally(function(){done++;if(pp)pp.style.width=(done/list.length*100)+"%";if(ps)ps.textContent=done+"/"+list.length+" ("+ok+" ok)"})});await Promise.all(proms)}lr=new Date().toISOString();save();if(btn){btn.disabled=false;btn.textContent="⟳ Refresh"}document.getElementById("sd").className="dot "+(ok?"dot-g":"dot-y");if(ok)toast(ok+" prices updated");else toast("Failed");rS();if(curTab==="portfolio")rPTable();if(curTab==="resp")rResp();if(curTab==="settings")rSet()}
+async function refreshPrices(){var btn=document.getElementById("rbtn");if(btn){btn.disabled=true;btn.textContent="⟳ ..."}var syms={};for(var i=0;i<H.length;i++){var s=H[i].s.replace(".TO","");syms[H[i].t==="U"?s:s+".TO"]=1}for(i=0;i<RE.length;i++){syms[RE[i].s+".TO"]=1}syms["CADUSD=X"]=1;var list=Object.keys(syms);var done=0,ok=0,fail=0;var pp=document.getElementById("pp"),ps=document.getElementById("ps");if(ps)ps.textContent="Fetching "+list.length+"...";for(var b=0;b<list.length;b+=5){var batch=list.slice(b,b+5);var proms=batch.map(function(sym){return fetch("https://api.allorigins.win/raw?url="+encodeURIComponent("https://query1.finance.yahoo.com/v8/finance/chart/"+encodeURIComponent(sym)+"?interval=1d&range=1d"),{signal:AbortSignal.timeout(8000)}).then(function(r){return r.json()}).then(function(d){var p=d&&d.chart&&d.chart.result&&d.chart.result[0]&&d.chart.result[0].meta&&d.chart.result[0].meta.regularMarketPrice;if(p){if(sym==="CADUSD=X"){ux=1/p;SJ("ux",ux)}else{var cs=sym.replace(".TO","");for(var j=0;j<H.length;j++){if(H[j].s===cs||H[j].s===cs+".TO")H[j].p=p}for(j=0;j<RE.length;j++){if(RE[j].s===cs)RE[j].p=p}}ok++}else fail++}).catch(function(){fail++}).finally(function(){done++;if(pp)pp.style.width=(done/list.length*100)+"%";if(ps)ps.textContent=done+"/"+list.length+" ("+ok+" ok)"})});await Promise.all(proms)}lr=new Date().toISOString();save();if(btn){btn.disabled=false;btn.textContent="⟳ Refresh"}document.getElementById("sd").className="dot "+(ok?"dot-g":"dot-y");if(ok)toast(ok+" prices updated");else toast("Failed");rS();if(curTab==="portfolio")rPTable();if(curTab==="resp")rResp();if(curTab==="settings")rSet()}
 function toggleAR(){if(arTimer){clearInterval(arTimer);arTimer=null;var b=document.getElementById("arb");if(b)b.textContent="▶ Auto 60s";toast("Stopped")}else{refreshPrices();arTimer=setInterval(refreshPrices,60000);var b2=document.getElementById("arb");if(b2)b2.textContent="⏸ Stop";toast("Auto on")}}
 
 // ═══ EXPORT ═══
