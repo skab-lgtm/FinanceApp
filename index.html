@@ -73,7 +73,7 @@ input:focus,select:focus{border-color:var(--ac)}
 <div id="tc" class="tc"></div>
 <div class="hd">
 <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px">
-<div><h1>Financial Command Center</h1><div class="sub"><span class="dot" id="sd"></span> <span id="stx">Loading...</span> <span style="color:var(--ac);margin-left:8px">v1.0.0</span></div></div>
+<div><h1>Financial Command Center</h1><div class="sub"><span class="dot" id="sd"></span> <span id="stx">Loading...</span> <span style="color:var(--ac);margin-left:8px">v1.1.1</span></div></div>
 <div style="display:flex;align-items:center;gap:10px">
 <button class="tt" onclick="toggleTheme()" title="Day/Night"></button>
 <div style="text-align:right"><div style="font-size:8px;color:var(--mt);text-transform:uppercase;letter-spacing:1px;font-weight:600">Net Worth</div><div class="nw" id="gt">—</div></div>
@@ -108,6 +108,7 @@ function SJ(k,v){try{localStorage.setItem("fc_"+k,JSON.stringify(v))}catch(e){}}
 var H=LJ("h",SH),A=LJ("a",SA),O=LJ("o",SO),B=LJ("b",SB),RE=LJ("r",SRE),ux=LJ("ux",1.39005),lr=LJ("lr",null);
 var gistId=LJ("gistId",""),ghToken=LJ("ghToken",""),theme=LJ("theme","dark");
 var gmailClientId=LJ("gmailCid",""),gmailToken=LJ("gmailTk","");
+var dailySnapshots=LJ("dailySnaps",[]),autoRefreshInterval=LJ("autoRefInt",5); // minutes;
 var pendingTrades=LJ("pendT",[]),arTimer=null,syncBusy=false;
 var txnLog=LJ("txnLog",[]);  // Transaction history: [{id,date,sym,action,shares,price,acct,tab}]
 var auditLog=LJ("auditLog",[]); // Deleted items for restore
@@ -140,7 +141,57 @@ async function pullFromGist(){if(!ghToken||!gistId)return false;try{var r=await 
 function gmailAuth(){if(!gmailClientId){toast("Set Client ID in Settings first");return}var redirect=window.location.href.split("?")[0].split("#")[0];var url="https://accounts.google.com/o/oauth2/v2/auth?client_id="+encodeURIComponent(gmailClientId)+"&redirect_uri="+encodeURIComponent(redirect)+"&response_type=token&scope="+encodeURIComponent("https://www.googleapis.com/auth/gmail.readonly")+"&prompt=consent";window.location.href=url}
 function checkGmailCallback(){var hash=window.location.hash;if(hash&&hash.indexOf("access_token")>0){var params={};hash.substring(1).split("&").forEach(function(p){var kv=p.split("=");params[kv[0]]=decodeURIComponent(kv[1])});if(params.access_token){gmailToken=params.access_token;SJ("gmailTk",gmailToken);window.location.hash="";toast("Gmail connected!")}}}
 async function scanGmail(){if(!gmailToken){toast("Connect Gmail in Settings first");return}toast("Scanning...");try{var q='from:notifications@wealthsimple.com subject:"order has been filled" newer_than:30d';var r=await fetch("https://www.googleapis.com/gmail/v1/users/me/messages?q="+encodeURIComponent(q)+"&maxResults=20",{headers:{"Authorization":"Bearer "+gmailToken}});if(r.status===401){gmailToken="";SJ("gmailTk","");toast("Token expired \u2014 reconnect");return}var data=await r.json();if(!data.messages||!data.messages.length){toast("No trade emails found");return}var nw=[];for(var i=0;i<Math.min(data.messages.length,15);i++){var mr=await fetch("https://www.googleapis.com/gmail/v1/users/me/messages/"+data.messages[i].id+"?format=full",{headers:{"Authorization":"Bearer "+gmailToken}});var msg=await mr.json();var tr=parseWSEmail(msg);if(tr&&!isDup(tr))nw.push(tr)}if(nw.length){pendingTrades=pendingTrades.concat(nw);save();toast(nw.length+" trade(s) found!")}else toast("No new trades")}catch(e){console.error(e);toast("Scan failed")}}
-function parseWSEmail(msg){var body="";function fb(p){if(p.body&&p.body.data)body+=atob(p.body.data.replace(/-/g,"+").replace(/_/g,"/"));if(p.parts)p.parts.forEach(fb)}if(msg.payload)fb(msg.payload);if(!body)return null;var account=(body.match(/Account:\s*(\S+)/i)||[])[1]||"";var type=(body.match(/Type:\s*([\w\s]+?)(?:\n|$)/i)||[])[1]||"";var symbol=(body.match(/Symbol:\s*(\S+)/i)||[])[1]||"";var shares=parseFloat((body.match(/Shares:\s*([\d,.]+)/i)||[])[1])||0;var price=parseFloat((body.match(/Average price:\s*\$?([\d,.]+)/i)||[])[1])||0;var total=parseFloat((body.match(/Total cost:\s*\$?([\d,.]+)/i)||[])[1])||0;var timeStr=(body.match(/Time:\s*(.+?)(?:\n|$)/i)||[])[1]||"";if(!symbol||!shares)return null;var isSell=type.toLowerCase().indexOf("sell")>=0;var acctMap={"RESP":"RESP Joint WS","TFSA":"SK TFSA WS","RRSP":"SK RRSP WS","Personal":"SK Non Reg"};return{symbol:symbol.toUpperCase(),action:isSell?"Sell":"Buy",shares:shares,price:price,total:total,account:account,acctId:acctMap[account]||"SK RRSP WS",date:timeStr,msgId:msg.id,currency:"CAD"}}
+function parseWSEmail(msg){
+  var body="";
+  function fb(p){
+    if(p.body&&p.body.data)body+=atob(p.body.data.replace(/-/g,"+").replace(/_/g,"/"));
+    if(p.parts)p.parts.forEach(fb)
+  }
+  if(msg.payload)fb(msg.payload);
+  if(!body)return null;
+  
+  // More flexible parsing for WealthSimple emails
+  var account=(body.match(/Account(?:\s+nickname)?:\s*([A-Z\s-]+?)(?:\n|Type)/i)||[])[1]||"";
+  var type=(body.match(/Type:\s*([\w\s]+?)(?:\n|$)/i)||[])[1]||"";
+  var symbol=(body.match(/Symbol:\s*([A-Z0-9.]+)/i)||[])[1]||"";
+  var shares=parseFloat((body.match(/Shares:\s*([\d,.]+)/i)||[])[1].replace(/,/g,""))||0;
+  
+  // Try multiple price patterns
+  var price=parseFloat((body.match(/Average\s+price:\s*(?:US|CA)?\$?([\d,.]+)/i)||[])[1])||0;
+  if(!price)price=parseFloat((body.match(/Price:\s*(?:US|CA)?\$?([\d,.]+)/i)||[])[1])||0;
+  
+  var total=parseFloat((body.match(/Total\s+cost:\s*(?:US|CA)?\$?([\d,.]+)/i)||[])[1].replace(/,/g,""))||0;
+  var timeStr=(body.match(/Time:\s*(.+?)(?:\n|EDT|EST|$)/i)||[])[1]||"";
+  
+  if(!symbol||!shares)return null;
+  
+  var isSell=type.toLowerCase().indexOf("sell")>=0||type.toLowerCase().indexOf("limit sell")>=0;
+  
+  // Map account names to your account IDs
+  var acctMap={
+    "RESP":"RESP Joint WS",
+    "RESP - SYED":"RESP Joint WS",
+    "TFSA":"SK TFSA WS",
+    "RRSP":"SK RRSP WS",
+    "RRSP - SYED":"SK RRSP WS",
+    "Personal":"SK Non Reg"
+  };
+  
+  var acctId=acctMap[account.trim()]||"SK RRSP WS";
+  
+  return{
+    symbol:symbol.toUpperCase(),
+    action:isSell?"Sell":"Buy",
+    shares:shares,
+    price:price||total/shares, // Fallback: calculate from total
+    total:total,
+    account:account.trim(),
+    acctId:acctId,
+    date:timeStr,
+    msgId:msg.id,
+    currency:body.indexOf("US$")>=0?"USD":"CAD"
+  };
+}
 function isDup(tr){for(var i=0;i<pendingTrades.length;i++)if(pendingTrades[i].msgId===tr.msgId)return true;for(var j=0;j<txnLog.length;j++)if(txnLog[j].msgId===tr.msgId)return true;return false}
 
 // ═══ TRANSACTION LOG ═══
@@ -177,14 +228,20 @@ function showSetupWizard(){document.getElementById("t-summary").innerHTML='<div 
 // Search uses a separate rendering path to preserve focus
 var pSearch="",pFTyp="all",pFAct="all";
 function rP(){
-  var c=calc();var fl=c.R.slice();
+  var c=calc();var stats=getDailyStats();var fl=c.R.slice();
   if(pSearch){var q=pSearch.toLowerCase();fl=fl.filter(function(r){return r.s.toLowerCase().indexOf(q)>=0||r.a.toLowerCase().indexOf(q)>=0||r.k.toLowerCase().indexOf(q)>=0})}
   if(pFTyp!=="all")fl=fl.filter(function(r){return r.k===pFTyp});
   if(pFAct!=="all")fl=fl.filter(function(r){for(var j=0;j<A.length;j++){if(A[j].id===r.a&&A[j].tp===pFAct)return true}return false});
   fl.sort(function(a,b){var av=a[sortK],bv=b[sortK];if(typeof av==="string")return sortD==="asc"?av.localeCompare(bv):bv.localeCompare(av);return sortD==="asc"?(av-bv):(bv-av)});
   var atypes=[];for(var x=0;x<A.length;x++)if(atypes.indexOf(A[x].tp)<0)atypes.push(A[x].tp);
 
-  var h='<div class="c" style="margin-bottom:8px"><div class="lb">Add Trade</div><div style="display:grid;grid-template-columns:repeat(6,1fr) auto;gap:4px;align-items:end"><div class="fg"><label class="fl">Symbol</label><input id="ts" placeholder="AAPL" style="text-transform:uppercase"></div><div class="fg"><label class="fl">Curr</label><select id="tt"><option value="C">CAD</option><option value="U">USD</option></select></div><div class="fg"><label class="fl">Cost</label><input id="tc2" type="number" step="0.01"></div><div class="fg"><label class="fl">Qty</label><input id="tn" type="number" step="0.01"></div><div class="fg"><label class="fl">Account</label><select id="ta">'+acOpts()+'</select></div><div class="fg"><label class="fl">Type</label><select id="tk"><option>Growth</option><option>Dividend</option><option>ETF</option></select></div><button class="b bp" onclick="addTrade()">+</button></div></div>';
+  var h='<div class="g g3" style="margin-bottom:8px">';
+  h+='<div class="c"><div class="lb">Today</div><div class="vl" style="color:'+plc(stats.dayChange)+'">'+(stats.dayChange>=0?'+':'')+' $'+F(Math.abs(stats.dayChange),0)+'</div><div class="sl" style="color:'+plc(stats.dayChange)+'">'+FP(stats.dayChangePc)+'</div></div>';
+  h+='<div class="c"><div class="lb">This Week</div><div class="vl" style="color:'+plc(stats.weekChange)+'">'+(stats.weekChange>=0?'+':'')+' $'+F(Math.abs(stats.weekChange),0)+'</div><div class="sl" style="color:'+plc(stats.weekChange)+'">'+FP(stats.weekChangePc)+'</div></div>';
+  h+='<div class="c"><div class="lb">This Month</div><div class="vl" style="color:'+plc(stats.monthChange)+'">'+(stats.monthChange>=0?'+':'')+' $'+F(Math.abs(stats.monthChange),0)+'</div><div class="sl" style="color:'+plc(stats.monthChange)+'">'+FP(stats.monthChangePc)+'</div></div>';
+  h+='</div>';
+  
+  h+='<div class="c" style="margin-bottom:8px"><div class="lb">Add Trade</div><div style="display:grid;grid-template-columns:repeat(6,1fr) auto;gap:4px;align-items:end"><div class="fg"><label class="fl">Symbol</label><input id="ts" placeholder="AAPL" style="text-transform:uppercase"></div><div class="fg"><label class="fl">Curr</label><select id="tt"><option value="C">CAD</option><option value="U">USD</option></select></div><div class="fg"><label class="fl">Cost</label><input id="tc2" type="number" step="0.01"></div><div class="fg"><label class="fl">Qty</label><input id="tn" type="number" step="0.01"></div><div class="fg"><label class="fl">Account</label><select id="ta">'+acOpts()+'</select></div><div class="fg"><label class="fl">Type</label><select id="tk"><option>Growth</option><option>Dividend</option><option>ETF</option></select></div><button class="b bp" onclick="addTrade()">+</button></div></div>';
 
   // Search bar — uses onkeyup + separate variable to avoid losing focus
   h+='<div class="sb"><input id="psq" placeholder="🔍 Search..." value="'+esc(pSearch)+'" onkeyup="pSearch=this.value;rPTable()" onchange="pSearch=this.value;rPTable()"><select onchange="pFTyp=this.value;rP()"><option value="all">All Types</option><option'+(pFTyp==="Growth"?" selected":"")+'>Growth</option><option'+(pFTyp==="Dividend"?" selected":"")+'>Dividend</option><option'+(pFTyp==="ETF"?" selected":"")+'>ETF</option></select><select onchange="pFAct=this.value;rP()"><option value="all">All Accts</option>';
@@ -350,8 +407,61 @@ function rSet(){
   h+='<div class="c"><div style="font-size:13px;font-weight:600;margin-bottom:3px">📱 iPhone</div><div class="sl">Safari → Share → Add to Home Screen</div></div>';
   document.getElementById("t-settings").innerHTML=h}
 
+// ═══ DAILY SNAPSHOTS ═══
+function takeDailySnapshot(){
+  var c=calc();
+  var today=new Date().toISOString().split('T')[0];
+  // Check if we already have a snapshot for today
+  var existing=dailySnapshots.findIndex(function(s){return s.date===today});
+  var snapshot={
+    date:today,
+    totalValue:c.tV,
+    totalCost:c.tC,
+    cash:c.cash,
+    holdingsCount:c.cnt,
+    topGainer:c.W.length?{s:c.W[0].s,pc:c.W[0].pc}:null,
+    topLoser:c.L.length?{s:c.L[0].s,pc:c.L[0].pc}:null
+  };
+  if(existing>=0){
+    dailySnapshots[existing]=snapshot;
+  }else{
+    dailySnapshots.push(snapshot);
+    // Keep only last 90 days
+    if(dailySnapshots.length>90){
+      dailySnapshots=dailySnapshots.slice(-90);
+    }
+  }
+  SJ("dailySnaps",dailySnapshots);
+}
+
+function getDailyStats(){
+  var c=calc();
+  var today=new Date().toISOString().split('T')[0];
+  var yesterday=new Date(Date.now()-86400000).toISOString().split('T')[0];
+  var weekAgo=new Date(Date.now()-604800000).toISOString().split('T')[0];
+  var monthAgo=new Date(Date.now()-2592000000).toISOString().split('T')[0];
+  
+  var todaySnap=dailySnapshots.find(function(s){return s.date===today});
+  var yesterdaySnap=dailySnapshots.find(function(s){return s.date===yesterday});
+  var weekSnap=dailySnapshots.find(function(s){return s.date>=weekAgo});
+  var monthSnap=dailySnapshots.find(function(s){return s.date>=monthAgo});
+  
+  return{
+    current:c.tV,
+    dayChange:yesterdaySnap?(c.tV-yesterdaySnap.totalValue):0,
+    dayChangePc:yesterdaySnap?((c.tV-yesterdaySnap.totalValue)/yesterdaySnap.totalValue):0,
+    weekChange:weekSnap?(c.tV-weekSnap.totalValue):0,
+    weekChangePc:weekSnap?((c.tV-weekSnap.totalValue)/weekSnap.totalValue):0,
+    monthChange:monthSnap?(c.tV-monthSnap.totalValue):0,
+    monthChangePc:monthSnap?((c.tV-monthSnap.totalValue)/monthSnap.totalValue):0,
+    history:dailySnapshots.slice(-7) // Last 7 days
+  };
+}
+
 // ═══ PRICES ═══
-async function refreshPrices(){var btn=document.getElementById("rbtn");if(btn){btn.disabled=true;btn.textContent="⟳ ..."}var syms={};for(var i=0;i<H.length;i++){var s=H[i].s.replace(".TO","");syms[H[i].t==="U"?s:s+".TO"]=1}for(i=0;i<RE.length;i++){syms[RE[i].s+".TO"]=1}syms["CADUSD=X"]=1;var list=Object.keys(syms);var done=0,ok=0,fail=0;var pp=document.getElementById("pp"),ps=document.getElementById("ps");if(ps)ps.textContent="Fetching "+list.length+"...";for(var b=0;b<list.length;b+=5){var batch=list.slice(b,b+5);var proms=batch.map(function(sym){return fetch("https://api.allorigins.win/raw?url="+encodeURIComponent("https://query1.finance.yahoo.com/v8/finance/chart/"+encodeURIComponent(sym)+"?interval=1d&range=1d"),{signal:AbortSignal.timeout(8000)}).then(function(r){return r.json()}).then(function(d){var p=d&&d.chart&&d.chart.result&&d.chart.result[0]&&d.chart.result[0].meta&&d.chart.result[0].meta.regularMarketPrice;if(p){if(sym==="CADUSD=X"){ux=1/p;SJ("ux",ux)}else{var cs=sym.replace(".TO","");for(var j=0;j<H.length;j++){if(H[j].s===cs||H[j].s===cs+".TO")H[j].p=p}for(j=0;j<RE.length;j++){if(RE[j].s===cs)RE[j].p=p}}ok++}else fail++}).catch(function(){fail++}).finally(function(){done++;if(pp)pp.style.width=(done/list.length*100)+"%";if(ps)ps.textContent=done+"/"+list.length+" ("+ok+" ok)"})});await Promise.all(proms)}lr=new Date().toISOString();save();if(btn){btn.disabled=false;btn.textContent="⟳ Refresh"}document.getElementById("sd").className="dot "+(ok?"dot-g":"dot-y");if(ok)toast(ok+" prices updated");else toast("Failed");rS();if(curTab==="portfolio")rPTable();if(curTab==="resp")rResp();if(curTab==="settings")rSet()}
+async function refreshPrices(){var btn=document.getElementById("rbtn");if(btn){btn.disabled=true;btn.textContent="⟳ ..."}var syms={};for(var i=0;i<H.length;i++){var s=H[i].s.replace(".TO","");syms[H[i].t==="U"?s:s+".TO"]=1}for(i=0;i<RE.length;i++){syms[RE[i].s+".TO"]=1}syms["CADUSD=X"]=1;var list=Object.keys(syms);var done=0,ok=0,fail=0;var pp=document.getElementById("pp"),ps=document.getElementById("ps");if(ps)ps.textContent="Fetching "+list.length+"...";for(var b=0;b<list.length;b+=5){var batch=list.slice(b,b+5);var proms=batch.map(function(sym){return fetch("https://api.allorigins.win/raw?url="+encodeURIComponent("https://query1.finance.yahoo.com/v8/finance/chart/"+encodeURIComponent(sym)+"?interval=1d&range=1d"),{signal:AbortSignal.timeout(8000)}).then(function(r){return r.json()}).then(function(d){var p=d&&d.chart&&d.chart.result&&d.chart.result[0]&&d.chart.result[0].meta&&d.chart.result[0].meta.regularMarketPrice;if(p){if(sym==="CADUSD=X"){ux=1/p;SJ("ux",ux)}else{var cs=sym.replace(".TO","");for(var j=0;j<H.length;j++){if(H[j].s===cs||H[j].s===cs+".TO")H[j].p=p}for(j=0;j<RE.length;j++){if(RE[j].s===cs)RE[j].p=p}}ok++}else fail++}).catch(function(){fail++}).finally(function(){done++;if(pp)pp.style.width=(done/list.length*100)+"%";if(ps)ps.textContent=done+"/"+list.length+" ("+ok+" ok)"})});await Promise.all(proms)}lr=new Date().toISOString();save();
+  takeDailySnapshot(); // Take snapshot after price update
+  if(btn){btn.disabled=false;btn.textContent="⟳ Refresh"}document.getElementById("sd").className="dot "+(ok?"dot-g":"dot-y");if(ok)toast(ok+" prices updated");else toast("Failed");rS();if(curTab==="portfolio")rPTable();if(curTab==="resp")rResp();if(curTab==="settings")rSet()}
 function toggleAR(){if(arTimer){clearInterval(arTimer);arTimer=null;var b=document.getElementById("arb");if(b)b.textContent="▶ Auto 60s";toast("Stopped")}else{refreshPrices();arTimer=setInterval(refreshPrices,60000);var b2=document.getElementById("arb");if(b2)b2.textContent="⏸ Stop";toast("Auto on")}}
 
 // ═══ EXPORT ═══
@@ -363,4 +473,9 @@ function expCSV(){var csv="Symbol,Currency,AvgCost,Shares,Price,Account,Type\n";
 checkGmailCallback();initNav();
 if(ghToken&&gistId){pullFromGist().then(function(ok){if(ok){rS();initNav()}})}
 rS();
+// Auto-start price refresh every 5 minutes
+setTimeout(function(){
+  refreshPrices();
+  setInterval(refreshPrices, 300000); // 5 minutes
+}, 2000); // Start after 2 seconds
 </script></body></html>
