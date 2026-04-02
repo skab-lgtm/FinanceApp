@@ -73,7 +73,7 @@ input:focus,select:focus{border-color:var(--ac)}
 <div id="tc" class="tc"></div>
 <div class="hd">
 <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px">
-<div><h1>Financial Command Center</h1><div class="sub"><span class="dot" id="sd"></span> <span id="stx">Loading...</span> <span style="color:var(--ac);margin-left:8px">v1.1.1</span></div></div>
+<div><h1>Financial Command Center</h1><div class="sub"><span class="dot" id="sd"></span> <span id="stx">Loading...</span> <span style="color:var(--ac);margin-left:8px">v1.1.2</span></div></div>
 <div style="display:flex;align-items:center;gap:10px">
 <button class="tt" onclick="toggleTheme()" title="Day/Night"></button>
 <div style="text-align:right"><div style="font-size:8px;color:var(--mt);text-transform:uppercase;letter-spacing:1px;font-weight:600">Net Worth</div><div class="nw" id="gt">—</div></div>
@@ -151,17 +151,31 @@ function parseWSEmail(msg){
   if(!body)return null;
   
   // More flexible parsing for WealthSimple emails
-  var account=(body.match(/Account(?:\s+nickname)?:\s*([A-Z\s-]+?)(?:\n|Type)/i)||[])[1]||"";
-  var type=(body.match(/Type:\s*([\w\s]+?)(?:\n|$)/i)||[])[1]||"";
-  var symbol=(body.match(/Symbol:\s*([A-Z0-9.]+)/i)||[])[1]||"";
-  var shares=parseFloat((body.match(/Shares:\s*([\d,.]+)/i)||[])[1].replace(/,/g,""))||0;
+  var accountMatch=body.match(/Account(?:\s+nickname)?:\s*([A-Z\s-]+?)(?:\n|Type)/i);
+  var account=accountMatch?accountMatch[1]:"";
+  
+  var typeMatch=body.match(/Type:\s*([\w\s]+?)(?:\n|$)/i);
+  var type=typeMatch?typeMatch[1]:"";
+  
+  var symbolMatch=body.match(/Symbol:\s*([A-Z0-9.]+)/i);
+  var symbol=symbolMatch?symbolMatch[1]:"";
+  
+  var sharesMatch=body.match(/Shares:\s*([\d,.]+)/i);
+  var shares=sharesMatch?parseFloat(sharesMatch[1].replace(/,/g,"")):0;
   
   // Try multiple price patterns
-  var price=parseFloat((body.match(/Average\s+price:\s*(?:US|CA)?\$?([\d,.]+)/i)||[])[1])||0;
-  if(!price)price=parseFloat((body.match(/Price:\s*(?:US|CA)?\$?([\d,.]+)/i)||[])[1])||0;
+  var priceMatch=body.match(/Average\s+price:\s*(?:US|CA)?\$?([\d,.]+)/i);
+  var price=priceMatch?parseFloat(priceMatch[1].replace(/,/g,"")):0;
+  if(!price){
+    priceMatch=body.match(/Price:\s*(?:US|CA)?\$?([\d,.]+)/i);
+    price=priceMatch?parseFloat(priceMatch[1].replace(/,/g,"")):0;
+  }
   
-  var total=parseFloat((body.match(/Total\s+cost:\s*(?:US|CA)?\$?([\d,.]+)/i)||[])[1].replace(/,/g,""))||0;
-  var timeStr=(body.match(/Time:\s*(.+?)(?:\n|EDT|EST|$)/i)||[])[1]||"";
+  var totalMatch=body.match(/Total\s+cost:\s*(?:US|CA)?\$?([\d,.]+)/i);
+  var total=totalMatch?parseFloat(totalMatch[1].replace(/,/g,"")):0;
+  
+  var timeMatch=body.match(/Time:\s*(.+?)(?:\n|EDT|EST|$)/i);
+  var timeStr=timeMatch?timeMatch[1]:"";
   
   if(!symbol||!shares)return null;
   
@@ -235,11 +249,16 @@ function rP(){
   fl.sort(function(a,b){var av=a[sortK],bv=b[sortK];if(typeof av==="string")return sortD==="asc"?av.localeCompare(bv):bv.localeCompare(av);return sortD==="asc"?(av-bv):(bv-av)});
   var atypes=[];for(var x=0;x<A.length;x++)if(atypes.indexOf(A[x].tp)<0)atypes.push(A[x].tp);
 
-  var h='<div class="g g3" style="margin-bottom:8px">';
-  h+='<div class="c"><div class="lb">Today</div><div class="vl" style="color:'+plc(stats.dayChange)+'">'+(stats.dayChange>=0?'+':'')+' $'+F(Math.abs(stats.dayChange),0)+'</div><div class="sl" style="color:'+plc(stats.dayChange)+'">'+FP(stats.dayChangePc)+'</div></div>';
-  h+='<div class="c"><div class="lb">This Week</div><div class="vl" style="color:'+plc(stats.weekChange)+'">'+(stats.weekChange>=0?'+':'')+' $'+F(Math.abs(stats.weekChange),0)+'</div><div class="sl" style="color:'+plc(stats.weekChange)+'">'+FP(stats.weekChangePc)+'</div></div>';
-  h+='<div class="c"><div class="lb">This Month</div><div class="vl" style="color:'+plc(stats.monthChange)+'">'+(stats.monthChange>=0?'+':'')+' $'+F(Math.abs(stats.monthChange),0)+'</div><div class="sl" style="color:'+plc(stats.monthChange)+'">'+FP(stats.monthChangePc)+'</div></div>';
-  h+='</div>';
+  var h='';
+  
+  // Only show performance cards if we have historical data
+  if(stats.hasData&&stats.dayChange!==0){
+    h+='<div class="g g3" style="margin-bottom:8px">';
+    h+='<div class="c"><div class="lb">Today</div><div class="vl" style="color:'+plc(stats.dayChange)+'">'+(stats.dayChange>=0?'+':'')+' $'+F(Math.abs(stats.dayChange),0)+'</div><div class="sl" style="color:'+plc(stats.dayChange)+'">'+FP(stats.dayChangePc)+'</div></div>';
+    h+='<div class="c"><div class="lb">This Week</div><div class="vl" style="color:'+plc(stats.weekChange)+'">'+(stats.weekChange>=0?'+':'')+' $'+F(Math.abs(stats.weekChange),0)+'</div><div class="sl" style="color:'+plc(stats.weekChange)+'">'+FP(stats.weekChangePc)+'</div></div>';
+    h+='<div class="c"><div class="lb">This Month</div><div class="vl" style="color:'+plc(stats.monthChange)+'">'+(stats.monthChange>=0?'+':'')+' $'+F(Math.abs(stats.monthChange),0)+'</div><div class="sl" style="color:'+plc(stats.monthChange)+'">'+FP(stats.monthChangePc)+'</div></div>';
+    h+='</div>';
+  }
   
   h+='<div class="c" style="margin-bottom:8px"><div class="lb">Add Trade</div><div style="display:grid;grid-template-columns:repeat(6,1fr) auto;gap:4px;align-items:end"><div class="fg"><label class="fl">Symbol</label><input id="ts" placeholder="AAPL" style="text-transform:uppercase"></div><div class="fg"><label class="fl">Curr</label><select id="tt"><option value="C">CAD</option><option value="U">USD</option></select></div><div class="fg"><label class="fl">Cost</label><input id="tc2" type="number" step="0.01"></div><div class="fg"><label class="fl">Qty</label><input id="tn" type="number" step="0.01"></div><div class="fg"><label class="fl">Account</label><select id="ta">'+acOpts()+'</select></div><div class="fg"><label class="fl">Type</label><select id="tk"><option>Growth</option><option>Dividend</option><option>ETF</option></select></div><button class="b bp" onclick="addTrade()">+</button></div></div>';
 
@@ -436,15 +455,37 @@ function takeDailySnapshot(){
 
 function getDailyStats(){
   var c=calc();
+  
+  // If we don't have snapshots yet, return zeros
+  if(!dailySnapshots||dailySnapshots.length===0){
+    return{
+      current:c.tV,
+      dayChange:0,
+      dayChangePc:0,
+      weekChange:0,
+      weekChangePc:0,
+      monthChange:0,
+      monthChangePc:0,
+      history:[],
+      hasData:false
+    };
+  }
+  
   var today=new Date().toISOString().split('T')[0];
   var yesterday=new Date(Date.now()-86400000).toISOString().split('T')[0];
   var weekAgo=new Date(Date.now()-604800000).toISOString().split('T')[0];
   var monthAgo=new Date(Date.now()-2592000000).toISOString().split('T')[0];
   
-  var todaySnap=dailySnapshots.find(function(s){return s.date===today});
+  // Find exact snapshot for yesterday
   var yesterdaySnap=dailySnapshots.find(function(s){return s.date===yesterday});
-  var weekSnap=dailySnapshots.find(function(s){return s.date>=weekAgo});
-  var monthSnap=dailySnapshots.find(function(s){return s.date>=monthAgo});
+  
+  // Find closest snapshot around a week ago
+  var weekSnap=dailySnapshots.slice().reverse().find(function(s){return s.date<=weekAgo});
+  if(!weekSnap&&dailySnapshots.length>0)weekSnap=dailySnapshots[0]; // Fallback to oldest
+  
+  // Find closest snapshot around a month ago  
+  var monthSnap=dailySnapshots.slice().reverse().find(function(s){return s.date<=monthAgo});
+  if(!monthSnap&&dailySnapshots.length>0)monthSnap=dailySnapshots[0]; // Fallback to oldest
   
   return{
     current:c.tV,
@@ -454,7 +495,8 @@ function getDailyStats(){
     weekChangePc:weekSnap?((c.tV-weekSnap.totalValue)/weekSnap.totalValue):0,
     monthChange:monthSnap?(c.tV-monthSnap.totalValue):0,
     monthChangePc:monthSnap?((c.tV-monthSnap.totalValue)/monthSnap.totalValue):0,
-    history:dailySnapshots.slice(-7) // Last 7 days
+    history:dailySnapshots.slice(-7), // Last 7 days
+    hasData:true
   };
 }
 
