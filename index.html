@@ -61,8 +61,8 @@ input:focus,select:focus{border-color:var(--ac)}
 .trade-card{padding:10px;border-radius:6px;background:var(--bg);margin-bottom:6px;border:1px solid var(--bd)}
 /* Transaction sub-rows */
 .txn-row{background:var(--bg2);font-size:10px}
-.txn-row td{padding:3px 7px 3px 28px;color:var(--mt);border-bottom:1px solid var(--bd)}
-.txn-toggle{cursor:pointer;user-select:none;display:inline-block;width:14px;text-align:center}
+.txn-row td{padding:2px 7px;color:var(--mt);border-bottom:1px solid var(--bd)}
+.txn-toggle{cursor:pointer;user-select:none}
 /* Setup wizard */
 .wizard{max-width:500px;margin:40px auto;text-align:center;padding:20px}
 .wizard h2{font-size:20px;font-weight:700;margin-bottom:8px}
@@ -73,7 +73,7 @@ input:focus,select:focus{border-color:var(--ac)}
 <div id="tc" class="tc"></div>
 <div class="hd">
 <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px">
-<div><h1>Financial Command Center</h1><div class="sub"><span class="dot" id="sd"></span> <span id="stx">Loading...</span> <span style="color:var(--ac);margin-left:8px">v1.2.0</span></div></div>
+<div><h1>Financial Command Center</h1><div class="sub"><span class="dot" id="sd"></span> <span id="stx">Loading...</span> <span style="color:var(--ac);margin-left:8px">v1.3.0</span></div></div>
 <div style="display:flex;align-items:center;gap:10px">
 <button class="tt" onclick="toggleTheme()" title="Day/Night"></button>
 <div style="text-align:right"><div style="font-size:8px;color:var(--mt);text-transform:uppercase;letter-spacing:1px;font-weight:600">Net Worth</div><div class="nw" id="gt">—</div></div>
@@ -211,24 +211,14 @@ function rPTable(){
     var kc=kco(r.k);
     var txns=getTxns(r.s,r.a);
     var hasExp=expanded[r.s+"_"+r.a];
-    h+="<tr><td style='font-weight:600;color:var(--ac)'>";
-    if(txns.length>0){
-      h+='<span class="txn-toggle" onclick="toggleExpanded(\''+r.s+'\',\''+r.a+'\')">'+(hasExp?"▼":"▶")+"</span> ";
-    }
-    h+=r.s+(r.t==="U"?"<sup style='font-size:7px;color:var(--mt);margin-left:1px'>USD</sup>":"")+"</td><td>$"+F(r.lp)+"</td><td>"+F(r.n,r.n%1?2:0)+"</td><td>$"+F(r.c)+"</td><td>$"+F(r.cc,0)+"</td><td>$"+F(r.vc,0)+"</td><td class='"+pcl(r.d)+"'>"+(r.d>=0?"+":"-")+"$"+F(Math.abs(r.d),0)+"</td><td class='"+pcl(r.pc)+"'>"+FP(r.pc)+'</td><td><span class="bg" style="background:var(--bl)22;color:var(--bl)">'+r.a+'</span></td><td><span class="bg" style="background:'+kc+"22;color:"+kc+'">'+r.k+"</span></td><td><button class='b bs' onclick='editI="+r._i+";rPTable()'>✎</button></td><td><button class='b bs br' onclick='rmTrade("+r._i+")'>×</button></td></tr>";
+    h+="<tr><td style='font-weight:600;color:var(--ac)'>"+(txns.length?'<span class="txn-toggle" onclick="expanded[\"'+r.s+"_"+r.a+'"]=!expanded[\"'+r.s+"_"+r.a+'"];rPTable()">'+(hasExp?"▼":"▶")+" </span>":"")+r.s+(r.t==="U"?"<sup style='font-size:7px;color:var(--mt);margin-left:1px'>USD</sup>":"")+"</td><td>$"+F(r.lp)+"</td><td>"+F(r.n,r.n%1?2:0)+"</td><td>$"+F(r.c)+"</td><td>$"+F(r.cc,0)+"</td><td>$"+F(r.vc,0)+"</td><td class='"+pcl(r.d)+"'>"+(r.d>=0?"+":"-")+"$"+F(Math.abs(r.d),0)+"</td><td class='"+pcl(r.pc)+"'>"+FP(r.pc)+'</td><td><span class="bg" style="background:var(--bl)22;color:var(--bl)">'+r.a+'</span></td><td><span class="bg" style="background:'+kc+"22;color:"+kc+'">'+r.k+"</span></td><td><button class='b bs' onclick='editI="+r._i+";rPTable()'>✎</button></td><td><button class='b bs br' onclick='rmTrade("+r._i+")'>×</button></td></tr>";
     // Transaction sub-rows
-    if(hasExp&&txns.length){
-      for(var ti=0;ti<txns.length;ti++){
-        var tx=txns[ti];
-        h+='<tr class="txn-row"><td colspan="3" style="padding-left:28px;color:var(--mt)">↳ '+new Date(tx.date).toLocaleDateString()+' <span style="color:'+(tx.action==="Buy"?"var(--gn)":"var(--rd)")+'">'+tx.action+" "+tx.shares+'</span></td><td colspan="2">@$'+F(tx.price)+'</td><td colspan="4" style="color:var(--mt)">Total: $'+F(tx.shares*tx.price,0)+'</td><td colspan="2"><button class="b bs br" onclick="removeTxn(\''+tx.id+'\',\''+r.s+'\',\''+r.a+'\')">×</button></td></tr>';
-      }
-    }
+    if(hasExp&&txns.length){for(var ti=0;ti<txns.length;ti++){var tx=txns[ti];h+='<tr class="txn-row"><td style="padding-left:20px;color:var(--mt)">\u21b3 '+new Date(tx.date).toLocaleDateString()+'</td><td colspan="2" style="color:'+(tx.action==="Buy"?"var(--gn)":"var(--rd)")+'">'+tx.action+" "+tx.shares+'</td><td>@$'+F(tx.price)+'</td><td colspan="5" style="color:var(--mt)">'+esc(tx.acct)+'</td><td colspan="2"><button class="b bs br" onclick="rmTxn(&quot;'+tx.id+'&quot;,'+r._i+')">×</button></td></tr>'}}
   }
   h+="</tbody></table></div>";
   document.getElementById("ptable").innerHTML=h}
 
 function srt(k){if(sortK===k)sortD=sortD==="asc"?"desc":"asc";else{sortK=k;sortD="desc"}rPTable()}
-function toggleExpanded(sym,acct){expanded[sym+"_"+acct]=!expanded[sym+"_"+acct];save();rPTable()}
 function addTrade(){var s=(document.getElementById("ts").value||"").trim().toUpperCase(),t=document.getElementById("tt").value,c=parseFloat(document.getElementById("tc2").value),n=parseFloat(document.getElementById("tn").value),a=document.getElementById("ta").value,k=document.getElementById("tk").value;if(!s||!c||!n){toast("Fill all fields");return}
   // Always add a new transaction entry
   addTxn(s,"Buy",n,c,a,"portfolio");
@@ -247,36 +237,6 @@ function rmTxn(txnId,holdingIdx){
     if(H[holdingIdx].n>0){var rem=H[holdingIdx];var totCost=rem.c*rem.n;rem.c=totCost>0?totCost/(rem.n):rem.c}
     else H.splice(holdingIdx,1)}
   auditAdd("txn",tx);txnLog.splice(ti,1);save();toast("Transaction reversed");rPTable();rS()}
-function removeTxn(txnId,sym,acct){
-  if(!confirm("Remove this transaction?"))return;
-  var ti=-1;
-  for(var i=0;i<txnLog.length;i++){
-    if(txnLog[i].id===txnId){ti=i;break}
-  }
-  if(ti<0)return;
-  var tx=txnLog[ti];
-  var hi=-1;
-  for(var j=0;j<H.length;j++){
-    if(H[j].s===sym&&H[j].a===acct){hi=j;break}
-  }
-  if(hi>=0&&tx.action==="Buy"){
-    var h=H[hi];
-    var newQty=Math.max(0,h.n-tx.shares);
-    if(newQty>0){
-      var totalCost=(h.c*h.n)-(tx.price*tx.shares);
-      H[hi].n=newQty;
-      H[hi].c=totalCost/newQty;
-    }else{
-      H.splice(hi,1);
-    }
-  }
-  auditAdd("txn",tx);
-  txnLog.splice(ti,1);
-  save();
-  toast("Transaction removed");
-  rPTable();
-  rS();
-}
 function saveEdit(i){H[i]={s:(document.getElementById("es").value||"").trim().toUpperCase(),t:document.getElementById("et").value,c:parseFloat(document.getElementById("ec").value)||0,n:parseFloat(document.getElementById("en").value)||0,p:parseFloat(document.getElementById("ep").value)||H[i].p,a:document.getElementById("ea").value,k:document.getElementById("ek").value};editI=-1;save();toast("Saved");rPTable();rS()}
 
 // ═══ TRADE APPROVAL ═══
@@ -355,77 +315,93 @@ async function refreshPrices(){
   var btn=document.getElementById("rbtn");
   if(btn){btn.disabled=true;btn.textContent="⟳ ..."}
   
+  var apiKey="69cdcfa708c6d7.16922685";
   var syms={};
+  
+  // Collect all unique symbols
   for(var i=0;i<H.length;i++){
-    var s=H[i].s.replace(".TO","");
-    syms[H[i].t==="U"?s:s+".TO"]=1;
+    var sym=H[i].s.replace(".TO","");
+    if(H[i].t==="U"){
+      syms[sym+".US"]=1; // US stocks
+    }else{
+      syms[sym+".TO"]=1; // Canadian stocks
+    }
   }
   for(i=0;i<RE.length;i++){
     syms[RE[i].s+".TO"]=1;
   }
-  syms["CADUSD=X"]=1;
   
   var list=Object.keys(syms);
   var done=0,ok=0,fail=0;
   var pp=document.getElementById("pp"),ps=document.getElementById("ps");
-  if(ps)ps.textContent="Fetching "+list.length+"...";
+  if(ps)ps.textContent="Fetching "+list.length+" symbols...";
   
-  // Batch process in groups of 5 to avoid rate limits
-  for(var b=0;b<list.length;b+=5){
-    var batch=list.slice(b,b+5);
-    var promises=batch.map(function(sym){
-      // Use direct Yahoo Finance API (works from GitHub Pages)
-      return fetch("https://query1.finance.yahoo.com/v8/finance/chart/"+encodeURIComponent(sym)+"?interval=1d&range=1d")
-        .then(function(r){return r.json()})
-        .then(function(d){
-          var p=d&&d.chart&&d.chart.result&&d.chart.result[0]&&d.chart.result[0].meta&&d.chart.result[0].meta.regularMarketPrice;
-          if(p){
-            if(sym==="CADUSD=X"){
-              ux=1/p;
-              SJ("ux",ux);
-            }else{
-              var cs=sym.replace(".TO","");
-              for(var j=0;j<H.length;j++){
-                if(H[j].s===cs||H[j].s===cs+".TO")H[j].p=p;
-              }
-              for(j=0;j<RE.length;j++){
-                if(RE[j].s===cs)RE[j].p=p;
-              }
-            }
-            ok++;
-          }else{
-            fail++;
+  // Fetch prices from EOD Historical Data
+  for(var b=0;b<list.length;b++){
+    var sym=list[b];
+    var url="https://eodhd.com/api/real-time/"+encodeURIComponent(sym)+"?api_token="+apiKey+"&fmt=json";
+    
+    try{
+      var response=await fetch(url);
+      var data=await response.json();
+      var price=data.close||data.previousClose;
+      
+      if(price){
+        var cleanSym=sym.replace(".US","").replace(".TO","");
+        // Update holdings
+        for(var j=0;j<H.length;j++){
+          if(H[j].s===cleanSym||H[j].s===cleanSym+".TO"){
+            H[j].p=price;
           }
-        })
-        .catch(function(e){
-          console.log("Failed to fetch "+sym+": "+e.message);
-          fail++;
-        })
-        .finally(function(){
-          done++;
-          if(pp)pp.style.width=(done/list.length*100)+"%";
-          if(ps)ps.textContent=done+"/"+list.length+" ("+ok+" ok)";
-        });
-    });
-    await Promise.all(promises);
-    // Small delay between batches
-    if(b+5<list.length){
-      await new Promise(function(resolve){setTimeout(resolve,500)});
+        }
+        // Update RESP
+        for(j=0;j<RE.length;j++){
+          if(RE[j].s===cleanSym){
+            RE[j].p=price;
+          }
+        }
+        ok++;
+      }else{
+        fail++;
+      }
+    }catch(e){
+      console.log("Failed: "+sym);
+      fail++;
     }
+    
+    done++;
+    if(pp)pp.style.width=(done/list.length*100)+"%";
+    if(ps)ps.textContent=done+"/"+list.length+" ("+ok+" ok)";
+    
+    // Small delay to avoid rate limits
+    await new Promise(function(r){setTimeout(r,200)});
+  }
+  
+  // Update USD/CAD rate
+  try{
+    var fxUrl="https://eodhd.com/api/real-time/CADUSD.FOREX?api_token="+apiKey+"&fmt=json";
+    var fxResp=await fetch(fxUrl);
+    var fxData=await fxResp.json();
+    if(fxData.close){
+      ux=1/fxData.close;
+      SJ("ux",ux);
+    }
+  }catch(e){
+    console.log("Failed to update USD/CAD");
   }
   
   lr=new Date().toISOString();
   save();
   if(btn){btn.disabled=false;btn.textContent="⟳ Refresh"}
   document.getElementById("sd").className="dot "+(ok?"dot-g":"dot-y");
-  if(ok)toast(ok+" prices updated");
-  else toast("Price fetch failed - try again");
+  if(ok)toast(ok+" prices updated!");
+  else toast("Price fetch failed");
   rS();
   if(curTab==="portfolio")rPTable();
   if(curTab==="resp")rResp();
   if(curTab==="settings")rSet();
 }
-function toggleAR(){if(arTimer){clearInterval(arTimer);arTimer=null;var b=document.getElementById("arb");if(b)b.textContent="▶ Auto 60s";toast("Stopped")}else{refreshPrices();arTimer=setInterval(refreshPrices,60000);var b2=document.getElementById("arb");if(b2)b2.textContent="⏸ Stop";toast("Auto on")}}
+function toggleAR(){toast("Auto-refresh disabled. Click Refresh button manually.")}
 
 // ═══ EXPORT ═══
 function expJSON(){var bl=new Blob([JSON.stringify(getAllData(),null,2)],{type:"application/json"});var a=document.createElement("a");a.href=URL.createObjectURL(bl);a.download="finance_"+new Date().toISOString().split("T")[0]+".json";a.click();toast("Exported")}
