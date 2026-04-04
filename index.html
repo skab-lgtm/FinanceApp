@@ -73,7 +73,7 @@ input:focus,select:focus{border-color:var(--ac)}
 <div id="tc" class="tc"></div>
 <div class="hd">
 <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px">
-<div><h1>Financial Command Center</h1><div class="sub"><span class="dot" id="sd"></span> <span id="stx">Loading...</span> <span style="color:var(--ac);margin-left:8px">v1.0.1</span></div></div>
+<div><h1>Financial Command Center</h1><div class="sub"><span class="dot" id="sd"></span> <span id="stx">USD/CAD: Loading...</span> <span style="color:var(--ac);margin-left:8px">v1.5.0</span></div></div>
 <div style="display:flex;align-items:center;gap:10px">
 <button class="tt" onclick="toggleTheme()" title="Day/Night"></button>
 <div style="text-align:right"><div style="font-size:8px;color:var(--mt);text-transform:uppercase;letter-spacing:1px;font-weight:600">Net Worth</div><div class="nw" id="gt">—</div></div>
@@ -108,6 +108,8 @@ function SJ(k,v){try{localStorage.setItem("fc_"+k,JSON.stringify(v))}catch(e){}}
 var H=LJ("h",SH),A=LJ("a",SA),O=LJ("o",SO),B=LJ("b",SB),RE=LJ("r",SRE),ux=LJ("ux",1.39005),lr=LJ("lr",null);
 var gistId=LJ("gistId",""),ghToken=LJ("ghToken",""),theme=LJ("theme","dark");
 var gmailClientId=LJ("gmailCid",""),gmailToken=LJ("gmailTk","");
+var alphaVantageKey=LJ("avKey",""); // Alpha Vantage API key
+var fxLastUpdate=LJ("fxLastUpdate",null); // When FX was last fetched
 var pendingTrades=LJ("pendT",[]),arTimer=null,syncBusy=false;
 var txnLog=LJ("txnLog",[]);  // Transaction history: [{id,date,sym,action,shares,price,acct,tab}]
 var auditLog=LJ("auditLog",[]); // Deleted items for restore
@@ -127,6 +129,33 @@ function esc(s){return String(s).replace(/&/g,"&amp;").replace(/"/g,"&quot;").re
 function uid(){return Date.now().toString(36)+Math.random().toString(36).substr(2,5)}
 function acOpts(sel){var h="";for(var i=0;i<A.length;i++)h+='<option value="'+esc(A[i].id)+'"'+(sel===A[i].id?" selected":"")+'>'+esc(A[i].l)+"</option>";return h}
 function toggleTheme(){theme=theme==="dark"?"light":"dark";document.documentElement.setAttribute("data-theme",theme);SJ("theme",theme);save()}
+
+// ═══ AUTO FX RATE ═══
+async function fetchFXRate(){
+  try{
+    var r=await fetch("https://api.exchangerate-api.com/v4/latest/USD");
+    var d=await r.json();
+    if(d&&d.rates&&d.rates.CAD){
+      ux=d.rates.CAD;
+      fxLastUpdate=new Date().toISOString();
+      SJ("ux",ux);
+      SJ("fxLastUpdate",fxLastUpdate);
+      return true;
+    }
+  }catch(e){console.log("FX fetch failed")}
+  return false;
+}
+// Auto-fetch on load if stale (>24h)
+if(!fxLastUpdate||Date.now()-new Date(fxLastUpdate).getTime()>86400000){
+  setTimeout(function(){
+    fetchFXRate().then(function(ok){
+      if(ok){
+        document.getElementById("stx").textContent="USD/CAD: "+ux.toFixed(4);
+        rS();
+      }
+    });
+  },1000);
+}
 
 // ═══ GIST SYNC ═══
 function getAllData(){return{h:H,a:A,o:O,b:B,r:RE,ux:ux,lr:lr,theme:theme,pendT:pendingTrades,txnLog:txnLog,auditLog:auditLog,ts:new Date().toISOString()}}
@@ -362,17 +391,30 @@ function restoreAudit(idx){
 // ═══ SETTINGS ═══
 function rSet(){
   var gcidMasked=gmailClientId?gmailClientId.substring(0,12)+"...":"";
+  var fxAge=fxLastUpdate?"Updated: "+new Date(fxLastUpdate).toLocaleString():"Never updated";
   var h='<div class="c" style="margin-bottom:8px"><div style="font-size:13px;font-weight:600;margin-bottom:6px">☁️ GitHub Gist Sync</div><div class="sl" style="line-height:1.5;margin-bottom:6px">Syncs all data across devices via private Gist.</div><div class="fg"><label class="fl">GitHub Token</label><div style="display:flex;gap:4px"><input id="ght" type="password" value="'+esc(ghToken)+'" placeholder="ghp_xxxx" style="flex:1"><button class="b bp bs" onclick="ghToken=document.getElementById(\'ght\').value.trim();SJ(\'ghToken\',ghToken);var gid=document.getElementById(\'gid\').value.trim();if(gid){gistId=gid;SJ(\'gistId\',gistId);pullFromGist().then(function(ok){if(ok){toast(\'Synced!\');setTimeout(function(){location.reload()},500)}else toast(\'Failed\')})}else syncToGist().then(function(){toast(\'Connected!\')})">Connect</button></div></div><div class="fg"><label class="fl">Gist ID</label><input id="gid" value="'+esc(gistId)+'" placeholder="Auto-created" style="font-size:9px"></div><div style="display:flex;gap:4px;margin-top:4px"><button class="b bs" onclick="pullFromGist().then(function(ok){if(ok){toast(\'Pulled!\');setTimeout(function(){location.reload()},500)}else toast(\'Failed\')})">↓ Pull</button><button class="b bs" onclick="syncToGist();toast(\'Pushed\')">↑ Push</button></div></div>';
   h+='<div class="c" style="margin-bottom:8px"><div style="font-size:13px;font-weight:600;margin-bottom:6px">📨 Gmail Integration</div><div class="sl" style="margin-bottom:6px">Reads WealthSimple trade emails (read-only).</div><div class="fg"><label class="fl">Google OAuth Client ID</label><div style="display:flex;gap:4px"><input id="gcid" type="password" value="'+esc(gmailClientId)+'" placeholder="Paste Client ID" style="flex:1"><button class="b bp bs" onclick="gmailClientId=document.getElementById(\'gcid\').value.trim();SJ(\'gmailCid\',gmailClientId);gmailAuth()">Connect Gmail</button></div></div>'+(gmailToken?'<div class="sl" style="margin-top:3px;color:var(--gn)">✓ Connected</div>':'<div class="sl" style="margin-top:3px;color:var(--gl)">Not connected</div>')+"</div>";
-  h+='<div class="c" style="margin-bottom:8px"><div style="font-size:13px;font-weight:600;margin-bottom:6px">🔄 Prices</div><div style="display:flex;gap:4px;margin-bottom:4px"><button class="b bp" onclick="refreshPrices()" id="rbtn">⟳ Refresh</button><button class="b" onclick="toggleAR()" id="arb">▶ Auto 60s</button></div><div id="ps" class="sl"></div><div class="pr"><div class="pf" id="pp" style="width:0%;background:var(--ac)"></div></div>'+(lr?'<div class="sl" style="margin-top:3px">Last: '+new Date(lr).toLocaleString()+'</div>':'')+'<div class="fg" style="margin-top:6px"><label class="fl">USD/CAD</label><input type="number" step="0.00001" value="'+ux+'" onchange="ux=Number(this.value);save();rS()" style="width:110px" class="mn"></div></div>';
+  h+='<div class="c" style="margin-bottom:8px"><div style="font-size:13px;font-weight:600;margin-bottom:6px">💱 USD/CAD Exchange Rate</div><div class="sl" style="margin-bottom:6px">Auto-fetches daily from exchangerate-api.com</div><div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><div class="vl" style="color:var(--ac)">'+ux.toFixed(4)+'</div><button class="b bp bs" onclick="fetchFXRate().then(function(ok){if(ok){toast(\'FX updated!\');rSet();rS()}})">⟳ Refresh FX</button></div><div class="sl" style="font-size:9px">'+fxAge+'</div><div class="fg" style="margin-top:6px"><label class="fl">Manual Override</label><input type="number" step="0.00001" value="'+ux+'" onchange="ux=Number(this.value);SJ(\'ux\',ux);save();rS()" style="width:110px" class="mn"></div></div>';
   h+='<div class="c" style="margin-bottom:8px"><div style="font-size:13px;font-weight:600;margin-bottom:4px">🎨 Theme</div><div style="display:flex;align-items:center;gap:8px"><span style="font-size:11px">🌙 Dark</span><button class="tt" onclick="toggleTheme()"></button><span style="font-size:11px">☀️ Light</span></div></div>';
-  h+='<div class="c" style="margin-bottom:8px"><div style="font-size:13px;font-weight:600;margin-bottom:4px">📁 Data</div><div style="display:flex;gap:4px;flex-wrap:wrap"><button class="b" onclick="expJSON()">↓ JSON</button><button class="b" onclick="impJSON()">↑ Import</button><button class="b" onclick="expCSV()">↓ CSV</button><button class="b br" onclick="if(confirm(\'Reset ALL?\')){localStorage.clear();location.reload()}">⚠ Reset</button></div></div>';
+  h+='<div class="c" style="margin-bottom:8px"><div style="font-size:13px;font-weight:600;margin-bottom:4px">📁 Data</div><div style="display:flex;gap:4px;flex-wrap:wrap"><button class="b" onclick="expJSON()">↓ JSON</button><button class="b" onclick="impJSON()">↑ Import</button><button class="b" onclick="expCSV()">↓ CSV</button><button class="b br" onclick="if(confirm(\'Reset ALL?\')){localStorage.clear();location.reload()}">⚠ Reset</button></div><div class="sl" style="margin-top:4px">💡 Tip: Export from Yahoo Finance → Import JSON here for current prices</div></div>';
   h+='<div class="c"><div style="font-size:13px;font-weight:600;margin-bottom:3px">📱 iPhone</div><div class="sl">Safari → Share → Add to Home Screen</div></div>';
   document.getElementById("t-settings").innerHTML=h}
 
 // ═══ PRICES ═══
-async function refreshPrices(){var btn=document.getElementById("rbtn");if(btn){btn.disabled=true;btn.textContent="⟳ ..."}var syms={};for(var i=0;i<H.length;i++){var s=H[i].s.replace(".TO","");syms[H[i].t==="U"?s:s+".TO"]=1}for(i=0;i<RE.length;i++){syms[RE[i].s+".TO"]=1}syms["CADUSD=X"]=1;var list=Object.keys(syms);var done=0,ok=0,fail=0;var pp=document.getElementById("pp"),ps=document.getElementById("ps");if(ps)ps.textContent="Fetching "+list.length+"...";for(var b=0;b<list.length;b+=5){var batch=list.slice(b,b+5);var proms=batch.map(function(sym){return fetch("https://api.allorigins.win/raw?url="+encodeURIComponent("https://query1.finance.yahoo.com/v8/finance/chart/"+encodeURIComponent(sym)+"?interval=1d&range=1d"),{signal:AbortSignal.timeout(8000)}).then(function(r){return r.json()}).then(function(d){var p=d&&d.chart&&d.chart.result&&d.chart.result[0]&&d.chart.result[0].meta&&d.chart.result[0].meta.regularMarketPrice;if(p){if(sym==="CADUSD=X"){ux=1/p;SJ("ux",ux)}else{var cs=sym.replace(".TO","");for(var j=0;j<H.length;j++){if(H[j].s===cs||H[j].s===cs+".TO")H[j].p=p}for(j=0;j<RE.length;j++){if(RE[j].s===cs)RE[j].p=p}}ok++}else fail++}).catch(function(){fail++}).finally(function(){done++;if(pp)pp.style.width=(done/list.length*100)+"%";if(ps)ps.textContent=done+"/"+list.length+" ("+ok+" ok)"})});await Promise.all(proms)}lr=new Date().toISOString();save();if(btn){btn.disabled=false;btn.textContent="⟳ Refresh"}document.getElementById("sd").className="dot "+(ok?"dot-g":"dot-y");if(ok)toast(ok+" prices updated");else toast("Failed");rS();if(curTab==="portfolio")rPTable();if(curTab==="resp")rResp();if(curTab==="settings")rSet()}
-function toggleAR(){if(arTimer){clearInterval(arTimer);arTimer=null;var b=document.getElementById("arb");if(b)b.textContent="▶ Auto 60s";toast("Stopped")}else{refreshPrices();arTimer=setInterval(refreshPrices,60000);var b2=document.getElementById("arb");if(b2)b2.textContent="⏸ Stop";toast("Auto on")}}
+// ═══ PRICES ═══
+// NOTE: Auto price fetch removed due to CORS/rate limit issues on GitHub Pages
+// Update prices manually or import fresh JSON with current prices
+async function refreshPrices(){
+  toast("Auto price fetch unavailable on GitHub Pages. Import JSON with current prices or update manually.");
+  // Also update FX rate
+  var ok=await fetchFXRate();
+  if(ok){
+    toast("FX rate updated: USD/CAD = "+ux.toFixed(4));
+    document.getElementById("stx").textContent="USD/CAD: "+ux.toFixed(4);
+    rS();
+  }
+}
+function toggleAR(){toast("Auto-refresh disabled. Use Import JSON or manual entry.")}
 
 // ═══ EXPORT ═══
 function expJSON(){var bl=new Blob([JSON.stringify(getAllData(),null,2)],{type:"application/json"});var a=document.createElement("a");a.href=URL.createObjectURL(bl);a.download="finance_"+new Date().toISOString().split("T")[0]+".json";a.click();toast("Exported")}
