@@ -44,8 +44,8 @@ input:focus,select:focus{border-color:var(--ac)}
 .fl{font-size:8px;color:var(--mt);font-weight:600;text-transform:uppercase;letter-spacing:.4px;margin-bottom:2px;display:block}
 .fg{display:flex;flex-direction:column;margin-bottom:4px}
 .sr{display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--bd);font-size:11px;align-items:center}.sr:last-child{border-bottom:none}
-.ar{padding:8px 10px;border-radius:5px;background:var(--bg);margin-bottom:4px;transition:background .3s}
-.bi{display:flex;align-items:center;gap:4px;padding:4px 6px;border-radius:4px;background:var(--bg);font-size:10px;transition:background .3s}
+.ar{padding:5px 8px;border-radius:4px;background:var(--bg);margin-bottom:3px;transition:background .3s}
+.bi{display:flex;align-items:center;gap:4px;padding:3px 5px;border-radius:4px;background:var(--bg);font-size:10px;transition:background .3s}
 .bi label{color:var(--mt);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .bi input{width:55px;text-align:right;padding:3px 4px;font-family:'JetBrains Mono',monospace;font-size:10px}
 .tc{position:fixed;top:8px;right:8px;z-index:9999}
@@ -370,7 +370,14 @@ async function fetchPrice(symbol){
   // Check cache (valid for 15 minutes)
   var cached=STATE.priceCache[symbol];
   if(cached && Date.now()-new Date(cached.timestamp).getTime()<900000){
+    console.log("📦 Using cached price for",symbol,"("+formatDate(cached.timestamp)+")");
     return {price:cached.price,currency:cached.currency};
+  }
+  
+  // Clear stale cache
+  if(cached){
+    console.log("🗑️ Clearing stale cache for",symbol);
+    delete STATE.priceCache[symbol];
   }
   
   try{
@@ -382,7 +389,7 @@ async function fetchPrice(symbol){
     
     // Canadian stock indicators
     if(symbol.includes("-UN")||symbol.includes("-T")||symbol.includes("-A")||
-       ["GSY","TD","BNS","ENB","BMO","TF","T","CPX","WCP","NA","CNQ","CM","MFC"].indexOf(symbol)>=0){
+       ["GSY","TD","BNS","ENB","BMO","TF","T","CPX","WCP","NA","CNQ","CM","MFC","AMD"].indexOf(symbol)>=0){
       isCadStock=true;
       // Add .TO for TSX if not already present
       if(!symbol.endsWith(".TO")&&!symbol.includes(".")){
@@ -396,7 +403,7 @@ async function fetchPrice(symbol){
       apiSymbol=symbol;
     }
     
-    console.log("Fetching price for",symbol,"using API symbol:",apiSymbol);
+    console.log("🔍 Fetching fresh price for",symbol,"using API symbol:",apiSymbol);
     
     var url="https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol="+encodeURIComponent(apiSymbol)+"&apikey="+CONFIG.alphaVantageKey;
     var r=await fetch(url);
@@ -406,7 +413,7 @@ async function fetchPrice(symbol){
       var price=parseFloat(d["Global Quote"]["05. price"]);
       var currency=isCadStock?"CAD":"USD";
       
-      console.log("✅ Price fetched:",symbol,"=",price,currency);
+      console.log("✅ Fresh price fetched:",symbol,"=","$"+price,currency);
       
       STATE.priceCache[symbol]={
         price: price,
@@ -418,11 +425,12 @@ async function fetchPrice(symbol){
       return {price:price,currency:currency};
     }else if(d.Note && d.Note.includes("API call frequency")){
       toast("API rate limit - wait 1 min");
+      console.warn("⚠️ Rate limited for",symbol);
     }else{
-      console.warn("No price data returned for",apiSymbol,d);
+      console.warn("❌ No price data returned for",apiSymbol,d);
     }
   }catch(e){
-    console.error("Price fetch failed for "+symbol+":",e);
+    console.error("❌ Price fetch failed for "+symbol+":",e);
     document.getElementById("sd").className="dot dot-r";
   }
   return null;
@@ -436,31 +444,46 @@ async function refreshPrices(){
   
   toast("Fetching prices...");
   var symbols=[];
+  var symbolMap={};  // Track which holdings/resp use which symbol
+  
+  // Collect symbols from holdings
   for(var i=0;i<STATE.holdings.length;i++){
     var sym=STATE.holdings[i].s;
-    if(symbols.indexOf(sym)<0)symbols.push(sym);
-  }
-  for(i=0;i<STATE.resp.length;i++){
-    sym=STATE.resp[i].s;
+    if(!symbolMap[sym])symbolMap[sym]={holdings:[],resp:[]};
+    symbolMap[sym].holdings.push(i);
     if(symbols.indexOf(sym)<0)symbols.push(sym);
   }
   
+  // Collect symbols from RESP
+  for(i=0;i<STATE.resp.length;i++){
+    sym=STATE.resp[i].s;
+    if(!symbolMap[sym])symbolMap[sym]={holdings:[],resp:[]};
+    symbolMap[sym].resp.push(i);
+    if(symbols.indexOf(sym)<0)symbols.push(sym);
+  }
+  
+  console.log("🔄 Refreshing prices for",symbols.length,"symbols");
+  
   // Rate limit: 5 calls per minute on free tier
+  var updated=0;
   for(i=0;i<Math.min(symbols.length,5);i++){
     var result=await fetchPrice(symbols[i]);
     if(result){
-      // Update holdings
-      for(var j=0;j<STATE.holdings.length;j++){
-        if(STATE.holdings[j].s===symbols[i]){
-          STATE.holdings[j].p=result.price;
-        }
+      // Update ALL holdings with this symbol
+      var indices=symbolMap[symbols[i]].holdings;
+      for(var j=0;j<indices.length;j++){
+        STATE.holdings[indices[j]].p=result.price;
+        STATE.holdings[indices[j]].priceUpdated=new Date().toISOString();
       }
-      // Update RESP
-      for(j=0;j<STATE.resp.length;j++){
-        if(STATE.resp[j].s===symbols[i]){
-          STATE.resp[j].p=result.price;
-        }
+      
+      // Update ALL RESP positions with this symbol
+      indices=symbolMap[symbols[i]].resp;
+      for(j=0;j<indices.length;j++){
+        STATE.resp[indices[j]].p=result.price;
+        STATE.resp[indices[j]].priceUpdated=new Date().toISOString();
       }
+      
+      updated++;
     }
     // Wait 12 seconds between calls (5 per minute max)
     if(i<Math.min(symbols.length,5)-1){
@@ -469,7 +492,7 @@ async function refreshPrices(){
   }
   
   save();
-  toast("Updated "+Math.min(symbols.length,5)+" prices");
+  toast("Updated "+updated+" price"+(updated!==1?"s":""));
   recalc();
 }
 
@@ -981,14 +1004,15 @@ function calculate(){
     otherTotal+=STATE.other[i].a;
   }
   
-  // RESP
+  // RESP - with FX conversion
   var respValue=0;
   var respCost=0;
   for(i=0;i<STATE.resp.length;i++){
     var re=STATE.resp[i];
     var rePrice=re.p||re.c;
-    respValue+=rePrice*re.n;
-    respCost+=re.c*re.n;
+    var reRate=re.t==="U"?fxRate:1;  // Apply FX rate for USD
+    respValue+=rePrice*re.n*reRate;
+    respCost+=re.c*re.n*reRate;
   }
   
   if(!byType["RESP"]){
@@ -1244,9 +1268,9 @@ function renderPortfolioTable(){
     '<button class="b bp" onclick="addManualTrade()">+</button>'+
     '</div></div>';
   
-  // Search/filter bar
+  // Search/filter bar - Fixed: input keeps focus
   h+='<div class="sb">'+
-    '<input id="psq" placeholder="🔍 Search..." value="'+esc(UI.searchTerm)+'" onkeyup="UI.searchTerm=this.value;renderPortfolioTable()">'+
+    '<input id="psq" type="text" placeholder="🔍 Search..." value="'+esc(UI.searchTerm)+'" oninput="handleSearchInput(this.value)">'+
     '<select onchange="UI.filterType=this.value;renderPortfolioTable()">'+
     '<option value="all">All Types</option>'+
     '<option'+(UI.filterType==="Growth"?" selected":"")+'>Growth</option>'+
@@ -1265,8 +1289,8 @@ function renderPortfolioTable(){
     '<span class="sl" style="margin-left:auto">'+filtered.length+'</span>'+
     '</div>';
   
-  // Table
-  h+='<div class="tw" style="max-height:60vh;overflow:auto"><table><thead><tr>';
+  // Table with ID for targeted updates
+  h+='<div class="tw" style="max-height:60vh;overflow:auto"><table id="ptable"><thead><tr>';
   
   var cols=[
     ["s","Symbol"],
@@ -1375,6 +1399,159 @@ function getAccountLabel(id){
     if(STATE.accounts[i].id===id)return STATE.accounts[i].l;
   }
   return id;
+}
+
+function toggleTxns(sym,acctId){
+  var key=sym+"_"+acctId;
+  UI.expanded[key]=!UI.expanded[key];
+  
+  // Store scroll position
+  var table=document.querySelector('.tw');
+  var scrollPos=table?table.scrollTop:0;
+  
+  renderPortfolioTableFiltered();
+  
+  // Restore scroll position
+  setTimeout(function(){
+    if(table)table.scrollTop=scrollPos;
+  },10);
+}
+
+// Search handler - prevents focus loss by using debounce
+var searchDebounce;
+function handleSearchInput(value){
+  UI.searchTerm=value;
+  clearTimeout(searchDebounce);
+  searchDebounce=setTimeout(function(){
+    renderPortfolioTableFiltered();
+  },150);
+}
+
+// Render only filtered rows without touching search input
+function renderPortfolioTableFiltered(){
+  var c=calculate();
+  var filtered=c.rows.slice();
+  
+  if(UI.searchTerm){
+    var q=UI.searchTerm.toLowerCase();
+    filtered=filtered.filter(function(r){
+      return r.s.toLowerCase().indexOf(q)>=0 || 
+             r.a.toLowerCase().indexOf(q)>=0 || 
+             r.k.toLowerCase().indexOf(q)>=0;
+    });
+  }
+  
+  if(UI.filterType!=="all"){
+    filtered=filtered.filter(function(r){return r.k===UI.filterType});
+  }
+  
+  if(UI.filterAcct!=="all"){
+    filtered=filtered.filter(function(r){
+      for(var j=0;j<STATE.accounts.length;j++){
+        if(STATE.accounts[j].id===r.a && STATE.accounts[j].tp===UI.filterAcct){
+          return true;
+        }
+      }
+      return false;
+    });
+  }
+  
+  // Sort
+  filtered.sort(function(a,b){
+    var av=a[UI.sortKey];
+    var bv=b[UI.sortKey];
+    if(typeof av==="string"){
+      return UI.sortDir==="asc"?av.localeCompare(bv):bv.localeCompare(av);
+    }
+    return UI.sortDir==="asc"?(av-bv):(bv-av);
+  });
+  
+  // Update just the table body and count
+  updatePortfolioTableBody(filtered);
+  document.querySelector('.sb .sl').textContent=filtered.length;
+}
+
+// Update table body without re-rendering entire page
+function updatePortfolioTableBody(filtered){
+  var tbody=document.querySelector('#ptable tbody');
+  if(!tbody)return;
+  
+  var h='';
+  for(var i=0;i<filtered.length;i++){
+    var r=filtered[i];
+    
+    if(UI.editIdx===r._i){
+      h+='<tr style="background:var(--bg2)"><td colspan="12"><div style="display:grid;grid-template-columns:repeat(7,1fr) auto;gap:3px;padding:4px;align-items:end"><div class="fg"><label class="fl">Sym</label><input id="es" value="'+esc(r.s)+'" style="width:55px"></div><div class="fg"><label class="fl">Cur</label><select id="et"><option value="C"'+(r.t==="C"?" selected":"")+'>CAD</option><option value="U"'+(r.t==="U"?" selected":"")+'>USD</option></select></div><div class="fg"><label class="fl">Cost</label><input id="ec" type="number" value="'+r.c+'" style="width:60px"></div><div class="fg"><label class="fl">Qty</label><input id="en" type="number" value="'+r.n+'" style="width:55px"></div><div class="fg"><label class="fl">Price</label><input id="ep" type="number" value="'+r.lp+'" style="width:60px"></div><div class="fg"><label class="fl">Acct</label><select id="ea">';
+      
+      for(var a=0;a<STATE.accounts.length;a++){
+        h+='<option value="'+esc(STATE.accounts[a].id)+'"'+(r.a===STATE.accounts[a].id?" selected":"")+'>'+
+          esc(STATE.accounts[a].l)+'</option>';
+      }
+      
+      h+='</select></div>'+
+        '<div class="fg"><label class="fl">Type</label><select id="ek">'+
+        '<option'+(r.k==="Growth"?" selected":"")+'>Growth</option>'+
+        '<option'+(r.k==="Dividend"?" selected":"")+'>Dividend</option>'+
+        '<option'+(r.k==="ETF"?" selected":"")+'>ETF</option>'+
+        '</select></div>'+
+        '<div style="display:flex;gap:2px">'+
+        '<button class="b bp bs" onclick="saveEdit('+r._i+')">✓</button>'+
+        '<button class="b bs" onclick="UI.editIdx=-1;renderPortfolioTable()">✕</button>'+
+        '</div></div></td></tr>';
+      continue;
+    }
+    
+    var kColor=kco(r.k);
+    var txns=getTransactions(r.s,r.a);
+    var hasExpanded=UI.expanded[r.s+"_"+r.a];
+    var currLabel=r.t==="U"?"USD":"CAD";
+    
+    // Get price timestamp
+    var priceTimestamp="";
+    for(var j=0;j<STATE.holdings.length;j++){
+      if(STATE.holdings[j].s===r.s&&STATE.holdings[j].a===r.a&&STATE.holdings[j].priceUpdated){
+        priceTimestamp='<div style="font-size:8px;color:var(--mt)">'+formatDate(STATE.holdings[j].priceUpdated)+'</div>';
+        break;
+      }
+    }
+    
+    h+='<tr>'+
+      '<td><div style="display:flex;align-items:center;gap:4px">'+
+      (txns.length?'<span class="txn-toggle" onclick="toggleTxns(\''+r.s+'\',\''+r.a+'\')">'+
+      (hasExpanded?"▼":"▶")+'</span>':'')+
+      '<span style="font-weight:600;color:var(--ac)">'+r.s+'</span>'+
+      '</div></td>'+
+      '<td class="mn"><div>$'+F(r.lp,2)+' <span style="font-size:9px;color:var(--mt)">'+currLabel+'</span></div>'+priceTimestamp+'</td>'+
+      '<td class="mn">'+F(r.n,2)+'</td>'+
+      '<td class="mn">$'+F(r.c,2)+'</td>'+
+      '<td class="mn">$'+F(r.cc,0)+'</td>'+
+      '<td class="mn">$'+F(r.vc,0)+'</td>'+
+      '<td class="mn '+pcl(r.d)+'">$'+F(r.d,0)+'</td>'+
+      '<td class="mn '+pcl(r.pc)+'">'+FP(r.pc)+'</td>'+
+      '<td style="font-size:9px">'+esc(getAccountLabel(r.a))+'</td>'+
+      '<td><span class="bg" style="background:'+kColor+'22;color:'+kColor+'">'+r.k+'</span></td>'+
+      '<td><button class="b bs" onclick="UI.editIdx='+r._i+';renderPortfolioTable()">✎</button></td>'+
+      '<td><button class="b bs br" onclick="deleteHolding('+r._i+')">✕</button></td>'+
+      '</tr>';
+    
+    // Transaction rows
+    if(hasExpanded && txns.length){
+      for(var t=0;t<txns.length;t++){
+        var txn=txns[t];
+        h+='<tr class="txn-row">'+
+          '<td colspan="3" style="padding-left:20px">'+
+          '<span style="font-size:9px">'+new Date(txn.date).toLocaleDateString()+'</span></td>'+
+          '<td>'+txn.action+'</td>'+
+          '<td class="mn">'+F(txn.shares,2)+'</td>'+
+          '<td class="mn">$'+F(txn.price,2)+'</td>'+
+          '<td colspan="4"></td>'+
+          '<td colspan="2"><button class="b bs br" onclick="deleteTxn(\''+txn.id+'\')">Delete</button></td>'+
+          '</tr>';
+      }
+    }
+  }
+  
+  tbody.innerHTML=h;
 }
 
 function toggleTxns(sym,acctId){
@@ -1522,18 +1699,26 @@ window.renderFunctions.resp=function(){
   for(var i=0;i<STATE.resp.length;i++){
     var r=STATE.resp[i];
     var price=r.p||r.c;
-    var value=price*r.n;
-    var cost=r.c*r.n;
+    var rate=r.t==="U"?STATE.fxRate:1;
+    var value=price*r.n*rate;
+    var cost=r.c*r.n*rate;
     var pl=value-cost;
     var plPct=cost?pl/cost:0;
     var kColor=kco(r.k);
+    var currLabel=r.t==="U"?"USD":"CAD";
+    
+    // Get price timestamp
+    var priceTimestamp="";
+    if(r.priceUpdated){
+      priceTimestamp='<div style="font-size:8px;color:var(--mt)">'+formatDate(r.priceUpdated)+'</div>';
+    }
     
     respTotal+=value;
     respCost+=cost;
     
     h+='<tr>'+
       '<td style="font-weight:600;color:var(--ac)">'+r.s+'</td>'+
-      '<td class="mn">$'+F(price,2)+'</td>'+
+      '<td class="mn"><div>$'+F(price,2)+' <span style="font-size:9px;color:var(--mt)">'+currLabel+'</span></div>'+priceTimestamp+'</td>'+
       '<td class="mn">'+F(r.n,2)+'</td>'+
       '<td class="mn">$'+F(r.c,2)+'</td>'+
       '<td class="mn">$'+F(value,0)+'</td>'+
@@ -1693,16 +1878,16 @@ window.renderFunctions.budget=function(){
     var pct=budg?(act/budg)*100:0;
     
     h+='<div class="ar">'+
-      '<div style="display:flex;justify-content:space-between;margin-bottom:3px">'+
-      '<span style="font-weight:600">'+esc(name)+'</span>'+
+      '<div style="display:flex;justify-content:space-between;margin-bottom:2px">'+
+      '<span style="font-weight:600;font-size:11px">'+esc(name)+'</span>'+
       '<button class="b bs br" onclick="deleteBudget(\''+esc(name)+'\')">✕</button>'+
       '</div>'+
-      '<div style="display:flex;gap:8px;align-items:center;margin-bottom:3px">'+
+      '<div style="display:flex;gap:6px;align-items:center;margin-bottom:2px">'+
       '<div class="bi" style="flex:1"><label>Budget</label><input type="number" value="'+budg+'" onchange="STATE.budget.items[\''+esc(name)+'\']=Number(this.value);save();window.renderFunctions.budget()" class="mn"></div>'+
       '<div class="bi" style="flex:1"><label>Actual</label><input type="number" value="'+act+'" onchange="STATE.budget.actuals[\''+esc(name)+'\']=Number(this.value);save();window.renderFunctions.budget()" class="mn"></div>'+
       '</div>'+
       '<div class="pr"><div class="pf" style="width:'+Math.min(pct,100)+'%;background:'+(pct>100?'var(--rd)':pct>80?'var(--gl)':'var(--gn)')+'"></div></div>'+
-      '<div class="sl" style="margin-top:2px">$'+F(act,0)+' / $'+F(budg,0)+' ('+F(pct,0)+'%)</div>'+
+      '<div class="sl" style="margin-top:1px;font-size:9px">$'+F(act,0)+' / $'+F(budg,0)+' ('+F(pct,0)+'%)</div>'+
       '</div>';
   }
   
@@ -2080,8 +2265,12 @@ window.renderFunctions.settings=function(){
     '<div class="fg"><label class="fl">API Key</label>'+
     '<input id="avk" type="password" value="'+esc(CONFIG.alphaVantageKey)+'" placeholder="Your API key">'+
     '</div>'+
-    '<button class="b bp bs" style="margin-top:4px" onclick="saveAVKey()">Save Key</button>'+
-    '<div class="sl" style="margin-top:4px">💡 Get free key at alphavantage.co</div>'+
+    '<div style="display:flex;gap:4px;margin-top:4px">'+
+    '<button class="b bp bs" onclick="saveAVKey()">Save Key</button>'+
+    '<button class="b bs" onclick="clearPriceCache()">🗑️ Clear Price Cache</button>'+
+    '</div>'+
+    '<div class="sl" style="margin-top:4px">💡 Cache lasts 15 min. Clear to force fresh prices.</div>'+
+    '<div class="sl" style="margin-top:2px">💡 Get free key at alphavantage.co</div>'+
     '</div>';
   
   h+='<div class="c" style="margin-bottom:8px">'+
@@ -2090,17 +2279,16 @@ window.renderFunctions.settings=function(){
     '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">'+
     '<div class="vl" style="color:var(--ac)">'+STATE.fxRate.toFixed(4)+'</div>'+
     '<button class="b bp bs" onclick="manualFXRefresh()">⟳ Refresh FX</button>'+
+    '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;margin-left:auto">'+
+    '<input type="checkbox" '+(CONFIG.autoFX?"checked":"")+' onchange="CONFIG.autoFX=this.checked;SJ(\'autoFX\',CONFIG.autoFX)">'+
+    '<span style="font-size:10px;color:var(--mt);white-space:nowrap">Auto-fetch on load if stale (>24h)</span>'+
+    '</label>'+
     '</div>'+
     '<div class="sl" style="font-size:9px">'+fxAge+'</div>'+
     '<div class="fg" style="margin-top:6px">'+
     '<label class="fl">Manual Override</label>'+
     '<input type="number" step="0.00001" value="'+STATE.fxRate+'" onchange="STATE.fxRate=Number(this.value);save();recalc()" style="width:110px" class="mn">'+
     '</div>'+
-    '<div style="margin-top:6px">'+
-    '<label style="display:flex;align-items:center;gap:6px;cursor:pointer">'+
-    '<input type="checkbox" '+(CONFIG.autoFX?"checked":"")+' onchange="CONFIG.autoFX=this.checked;SJ(\'autoFX\',CONFIG.autoFX)">'+
-    '<span style="font-size:11px">Auto-fetch on load if stale (>24h)</span>'+
-    '</label></div>'+
     '</div>';
   
   h+='<div class="c" style="margin-bottom:8px">'+
@@ -2179,6 +2367,14 @@ function saveAVKey(){
   CONFIG.alphaVantageKey=document.getElementById("avk").value.trim();
   SJ("avKey",CONFIG.alphaVantageKey);
   toast("API key saved");
+}
+
+function clearPriceCache(){
+  var count=Object.keys(STATE.priceCache).length;
+  STATE.priceCache={};
+  save();
+  toast("Cleared "+count+" cached price"+(count!==1?"s":""));
+  console.log("🗑️ Price cache cleared -",count,"entries removed");
 }
 
 function manualFXRefresh(){
