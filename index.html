@@ -215,21 +215,49 @@ function getAllData(){
   };
 }
 
-function applyData(d){
-  if(d.holdings)STATE.holdings=d.holdings;
-  if(d.resp)STATE.resp=d.resp;
-  if(d.accounts)STATE.accounts=d.accounts;
-  if(d.other)STATE.other=d.other;
+function applyData(d,skipSave){
+  console.log("Applying data - Input keys:",Object.keys(d));
+  
+  // Handle v2.0 format (full names)
+  if(d.holdings && Array.isArray(d.holdings))STATE.holdings=d.holdings;
+  if(d.resp && Array.isArray(d.resp))STATE.resp=d.resp;
+  if(d.accounts && Array.isArray(d.accounts))STATE.accounts=d.accounts;
+  if(d.other && Array.isArray(d.other))STATE.other=d.other;
   if(d.budget)STATE.budget=d.budget;
-  if(d.txnLog)STATE.txnLog=d.txnLog;
-  if(d.pendingTrades)STATE.pendingTrades=d.pendingTrades;
-  if(d.auditLog)STATE.auditLog=d.auditLog;
+  if(d.txnLog && Array.isArray(d.txnLog))STATE.txnLog=d.txnLog;
+  if(d.pendingTrades && Array.isArray(d.pendingTrades))STATE.pendingTrades=d.pendingTrades;
+  if(d.auditLog && Array.isArray(d.auditLog))STATE.auditLog=d.auditLog;
   if(d.priceCache)STATE.priceCache=d.priceCache;
   if(d.fxRate)STATE.fxRate=d.fxRate;
   if(d.fxLastUpdate)STATE.fxLastUpdate=d.fxLastUpdate;
   if(d.dividends)STATE.dividends=d.dividends;
+  
+  // Handle v1.5 format (short names) - AUTO MIGRATION
+  if(d.h && Array.isArray(d.h))STATE.holdings=d.h;
+  if(d.r && Array.isArray(d.r))STATE.resp=d.r;
+  if(d.a && Array.isArray(d.a))STATE.accounts=d.a;
+  if(d.o && Array.isArray(d.o))STATE.other=d.o;
+  if(d.b)STATE.budget=d.b;
+  if(d.ux)STATE.fxRate=d.ux;
+  if(d.pendT && Array.isArray(d.pendT))STATE.pendingTrades=d.pendT;
+  
+  // Handle legacy dividend format
+  if(!STATE.dividends || Object.keys(STATE.dividends).length===0){
+    STATE.dividends={
+      DFN:0.3221,TD:1.09,BNS:1.117,ENB:0.9918,"DFN-A":0.1787,XEQT:0.1813,"FCD-UN":0.134,
+      BMO:1.71,VFV:0.4077,"NWH-UN":0.0924,"BEP-UN":0.5535,TF:0.1797,"DIR-UN":0.1787,
+      T:0.4425,CPX:0.7083,WCP:0.1823,"QQC-T":0.041,"REI-UN":0.2893,NA:1.2825,
+      CNQ:0.625,CM:1.09,GSY:1.6347,NPI:0.18,MFC:0.44,PFE:0.42,QQQ:0.52
+    };
+  }
+  
   if(d.theme){CONFIG.theme=d.theme;document.documentElement.setAttribute("data-theme",CONFIG.theme)}
-  save();
+  
+  console.log("✅ Data applied - Holdings:",STATE.holdings.length,"Accounts:",STATE.accounts.length,"RESP:",STATE.resp.length);
+  
+  if(!skipSave){
+    save();
+  }
 }
 
 var syncBusy=false;
@@ -260,13 +288,46 @@ async function syncToGist(){
 async function pullFromGist(){
   if(!CONFIG.ghToken||!CONFIG.gistId)return false;
   try{
+    console.log("☁️ Pulling from Gist:",CONFIG.gistId);
     var r=await fetch("https://api.github.com/gists/"+CONFIG.gistId,{
       headers:{"Authorization":"token "+CONFIG.ghToken}
     });
     var j=await r.json();
+    console.log("📁 Gist response files:",Object.keys(j.files||{}));
+    
+    // Try v2.0 format first
     var c=j.files&&j.files["finance_data_v2.json"]&&j.files["finance_data_v2.json"].content;
-    if(c){applyData(JSON.parse(c));return true}
-  }catch(e){console.error("Gist pull failed:",e)}
+    
+    // Fall back to v1.5 format
+    if(!c){
+      c=j.files&&j.files["finance_data.json"]&&j.files["finance_data.json"].content;
+      console.log("📄 Using v1.5 format from Gist");
+    }
+    
+    if(c){
+      console.log("📥 Parsing Gist data...");
+      var data=JSON.parse(c);
+      
+      // Check if Gist has actual data
+      var hasHoldings=(data.holdings&&data.holdings.length>0)||(data.h&&data.h.length>0);
+      var hasAccounts=(data.accounts&&data.accounts.length>0)||(data.a&&data.a.length>0);
+      
+      if(!hasHoldings&&!hasAccounts){
+        console.warn("⚠️ Gist has no holdings or accounts - skipping to prevent data loss");
+        return false;
+      }
+      
+      applyData(data,true);
+      
+      // Save to localStorage
+      save();
+      
+      console.log("✅ Gist data applied - Holdings:",STATE.holdings.length,"Accounts:",STATE.accounts.length);
+      return true;
+    }else{
+      console.error("❌ No data file found in Gist");
+    }
+  }catch(e){console.error("❌ Gist pull failed:",e)}
   return false;
 }
 
@@ -314,14 +375,38 @@ async function fetchPrice(symbol){
   
   try{
     document.getElementById("sd").className="dot dot-y";
-    var url="https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol="+encodeURIComponent(symbol)+"&apikey="+CONFIG.alphaVantageKey;
+    
+    // Determine if this is a Canadian stock and add .TO if needed
+    var apiSymbol=symbol;
+    var isCadStock=false;
+    
+    // Canadian stock indicators
+    if(symbol.includes("-UN")||symbol.includes("-T")||symbol.includes("-A")||
+       ["GSY","TD","BNS","ENB","BMO","TF","T","CPX","WCP","NA","CNQ","CM","MFC"].indexOf(symbol)>=0){
+      isCadStock=true;
+      // Add .TO for TSX if not already present
+      if(!symbol.endsWith(".TO")&&!symbol.includes(".")){
+        apiSymbol=symbol+".TO";
+      }
+    }
+    
+    // US stocks - check if already has exchange suffix
+    if(symbol.endsWith(".TO")){
+      isCadStock=true;
+      apiSymbol=symbol;
+    }
+    
+    console.log("Fetching price for",symbol,"using API symbol:",apiSymbol);
+    
+    var url="https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol="+encodeURIComponent(apiSymbol)+"&apikey="+CONFIG.alphaVantageKey;
     var r=await fetch(url);
     var d=await r.json();
     
     if(d["Global Quote"] && d["Global Quote"]["05. price"]){
       var price=parseFloat(d["Global Quote"]["05. price"]);
-      // Determine currency based on symbol suffix
-      var currency = symbol.endsWith(".TO") || symbol.includes("-UN") || symbol.includes("-T") ? "CAD" : "USD";
+      var currency=isCadStock?"CAD":"USD";
+      
+      console.log("✅ Price fetched:",symbol,"=",price,currency);
       
       STATE.priceCache[symbol]={
         price: price,
@@ -333,6 +418,8 @@ async function fetchPrice(symbol){
       return {price:price,currency:currency};
     }else if(d.Note && d.Note.includes("API call frequency")){
       toast("API rate limit - wait 1 min");
+    }else{
+      console.warn("No price data returned for",apiSymbol,d);
     }
   }catch(e){
     console.error("Price fetch failed for "+symbol+":",e);
@@ -1240,6 +1327,7 @@ function renderPortfolioTable(){
     var kColor=kco(r.k);
     var txns=getTransactions(r.s,r.a);
     var hasExpanded=UI.expanded[r.s+"_"+r.a];
+    var currLabel=r.t==="U"?"USD":"CAD";
     
     h+='<tr>'+
       '<td><div style="display:flex;align-items:center;gap:4px">'+
@@ -1247,7 +1335,7 @@ function renderPortfolioTable(){
       (hasExpanded?"▼":"▶")+'</span>':'')+
       '<span style="font-weight:600;color:var(--ac)">'+r.s+'</span>'+
       '</div></td>'+
-      '<td class="mn">$'+F(r.lp,2)+'</td>'+
+      '<td class="mn">$'+F(r.lp,2)+' <span style="font-size:9px;color:var(--mt)">'+currLabel+'</span></td>'+
       '<td class="mn">'+F(r.n,2)+'</td>'+
       '<td class="mn">$'+F(r.c,2)+'</td>'+
       '<td class="mn">$'+F(r.cc,0)+'</td>'+
@@ -1685,29 +1773,43 @@ window.renderFunctions.dividends=function(){
 window.renderFunctions.other=function(){
   var h='<div class="c" style="margin-bottom:8px">'+
     '<div class="lb">Add Investment</div>'+
-    '<div style="display:grid;grid-template-columns:1fr 1fr auto;gap:4px;align-items:end">'+
+    '<div style="display:grid;grid-template-columns:2fr 1fr 1fr auto;gap:4px;align-items:end">'+
     '<div class="fg"><label class="fl">Name</label><input id="on"></div>'+
-    '<div class="fg"><label class="fl">Amount</label><input id="oa" type="number"></div>'+
+    '<div class="fg"><label class="fl">Amount</label><input id="oa" type="number" step="0.01"></div>'+
+    '<div class="fg"><label class="fl">Description</label><input id="od" placeholder="Optional"></div>'+
     '<button class="b bp" onclick="addOther()">+</button>'+
     '</div></div>';
   
   h+='<div class="tw"><table><thead><tr>'+
-    '<th>Name</th><th>Amount</th><th></th>'+
+    '<th>Name</th><th>Amount</th><th>Description</th><th></th><th></th>'+
     '</tr></thead><tbody>';
   
   var total=0;
   for(var i=0;i<STATE.other.length;i++){
     var o=STATE.other[i];
     total+=o.a;
-    h+='<tr>'+
-      '<td style="font-weight:600">'+esc(o.n)+'</td>'+
-      '<td class="mn">$'+F(o.a,0)+'</td>'+
-      '<td><button class="b bs br" onclick="deleteOther('+i+')">✕</button></td>'+
-      '</tr>';
+    
+    if(UI.editIdx===i && UI.curTab==="other"){
+      h+='<tr style="background:var(--bg2)">'+
+        '<td><input id="eon" value="'+esc(o.n)+'" style="width:100%"></td>'+
+        '<td><input id="eoa" type="number" step="0.01" value="'+o.a+'" style="width:100px" class="mn"></td>'+
+        '<td><input id="eod" value="'+esc(o.d||'')+'" style="width:100%" placeholder="Optional"></td>'+
+        '<td><button class="b bp bs" onclick="saveOtherEdit('+i+')">✓</button></td>'+
+        '<td><button class="b bs" onclick="UI.editIdx=-1;window.renderFunctions.other()">✕</button></td>'+
+        '</tr>';
+    }else{
+      h+='<tr>'+
+        '<td style="font-weight:600">'+esc(o.n)+'</td>'+
+        '<td class="mn">$'+F(o.a,0)+'</td>'+
+        '<td style="font-size:10px;color:var(--mt)">'+esc(o.d||'—')+'</td>'+
+        '<td><button class="b bs" onclick="UI.editIdx='+i+';window.renderFunctions.other()">✎</button></td>'+
+        '<td><button class="b bs br" onclick="deleteOther('+i+')">✕</button></td>'+
+        '</tr>';
+    }
   }
   
   h+='</tbody><tfoot><tr style="font-weight:700;background:var(--bg2)">'+
-    '<td>TOTAL</td><td class="mn">$'+F(total,0)+'</td><td></td>'+
+    '<td>TOTAL</td><td class="mn">$'+F(total,0)+'</td><td colspan="3"></td>'+
     '</tr></tfoot></table></div>';
   
   document.getElementById("t-other").innerHTML=h;
@@ -1716,11 +1818,28 @@ window.renderFunctions.other=function(){
 function addOther(){
   var name=document.getElementById("on").value.trim();
   var amt=parseFloat(document.getElementById("oa").value)||0;
+  var desc=document.getElementById("od").value.trim();
   if(!name)return;
   
-  STATE.other.push({n:name,a:amt});
+  STATE.other.push({n:name,a:amt,d:desc});
   document.getElementById("on").value="";
   document.getElementById("oa").value="";
+  document.getElementById("od").value="";
+  save();
+  window.renderFunctions.other();
+  recalc();
+}
+
+function saveOtherEdit(idx){
+  var name=document.getElementById("eon").value.trim();
+  var amt=parseFloat(document.getElementById("eoa").value)||0;
+  var desc=document.getElementById("eod").value.trim();
+  if(!name)return;
+  
+  STATE.other[idx].n=name;
+  STATE.other[idx].a=amt;
+  STATE.other[idx].d=desc;
+  UI.editIdx=-1;
   save();
   window.renderFunctions.other();
   recalc();
@@ -1754,7 +1873,7 @@ window.renderFunctions.accounts=function(){
     '</div></div>';
   
   h+='<div class="tw"><table><thead><tr>'+
-    '<th>Label</th><th>Type</th><th>CAD Cash</th><th>USD Cash</th><th>Total</th><th></th>'+
+    '<th>Label</th><th>Type</th><th>CAD Cash</th><th>USD Cash</th><th>Total</th><th></th><th></th>'+
     '</tr></thead><tbody>';
   
   var totalCash=0;
@@ -1764,18 +1883,36 @@ window.renderFunctions.accounts=function(){
     totalCash+=cash;
     var typeColor=tpc(a.tp);
     
-    h+='<tr>'+
-      '<td style="font-weight:600">'+esc(a.l)+'</td>'+
-      '<td><span class="bg" style="background:'+typeColor+'22;color:'+typeColor+'">'+a.tp+'</span></td>'+
-      '<td class="mn">$'+F(a.cc||0,0)+'</td>'+
-      '<td class="mn">$'+F(a.cu||0,0)+'</td>'+
-      '<td class="mn" style="color:var(--ac)">$'+F(cash,0)+'</td>'+
-      '<td><button class="b bs br" onclick="deleteAcct('+i+')">✕</button></td>'+
-      '</tr>';
+    if(UI.editIdx===i && UI.curTab==="accounts"){
+      h+='<tr style="background:var(--bg2)">'+
+        '<td><input id="eal" value="'+esc(a.l)+'" style="width:100%"></td>'+
+        '<td><select id="eat" style="width:100px">'+
+        '<option'+(a.tp==="TFSA"?" selected":"")+'>TFSA</option>'+
+        '<option'+(a.tp==="RRSP"?" selected":"")+'>RRSP</option>'+
+        '<option'+(a.tp==="RESP"?" selected":"")+'>RESP</option>'+
+        '<option'+(a.tp==="Non-Reg"?" selected":"")+'>Non-Reg</option>'+
+        '</select></td>'+
+        '<td><input id="eac" type="number" step="0.01" value="'+(a.cc||0)+'" style="width:100px" class="mn"></td>'+
+        '<td><input id="eau" type="number" step="0.01" value="'+(a.cu||0)+'" style="width:100px" class="mn"></td>'+
+        '<td class="mn">$'+F(cash,0)+'</td>'+
+        '<td><button class="b bp bs" onclick="saveAcctEdit('+i+')">✓</button></td>'+
+        '<td><button class="b bs" onclick="UI.editIdx=-1;window.renderFunctions.accounts()">✕</button></td>'+
+        '</tr>';
+    }else{
+      h+='<tr>'+
+        '<td style="font-weight:600">'+esc(a.l)+'</td>'+
+        '<td><span class="bg" style="background:'+typeColor+'22;color:'+typeColor+'">'+a.tp+'</span></td>'+
+        '<td class="mn">$'+F(a.cc||0,0)+'</td>'+
+        '<td class="mn">$'+F(a.cu||0,0)+'</td>'+
+        '<td class="mn" style="color:var(--ac)">$'+F(cash,0)+'</td>'+
+        '<td><button class="b bs" onclick="UI.editIdx='+i+';window.renderFunctions.accounts()">✎</button></td>'+
+        '<td><button class="b bs br" onclick="deleteAcct('+i+')">✕</button></td>'+
+        '</tr>';
+    }
   }
   
   h+='</tbody><tfoot><tr style="font-weight:700;background:var(--bg2)">'+
-    '<td colspan="4">TOTAL CASH</td><td class="mn">$'+F(totalCash,0)+'</td><td></td>'+
+    '<td colspan="4">TOTAL CASH</td><td class="mn">$'+F(totalCash,0)+'</td><td colspan="2"></td>'+
     '</tr></tfoot></table></div>';
   
   document.getElementById("t-accounts").innerHTML=h;
@@ -1801,6 +1938,24 @@ function addAcct(){
   document.getElementById("ac").value="";
   document.getElementById("au").value="";
   
+  save();
+  recalc();
+}
+
+function saveAcctEdit(idx){
+  var label=document.getElementById("eal").value.trim();
+  var type=document.getElementById("eat").value;
+  var cad=parseFloat(document.getElementById("eac").value)||0;
+  var usd=parseFloat(document.getElementById("eau").value)||0;
+  
+  if(!label)return;
+  
+  STATE.accounts[idx].l=label;
+  STATE.accounts[idx].tp=type;
+  STATE.accounts[idx].cc=cad;
+  STATE.accounts[idx].cu=usd;
+  
+  UI.editIdx=-1;
   save();
   recalc();
 }
@@ -1957,13 +2112,26 @@ window.renderFunctions.settings=function(){
     '</div></div>';
   
   h+='<div class="c" style="margin-bottom:8px">'+
-    '<div style="font-size:13px;font-weight:600;margin-bottom:4px">📁 Data</div>'+
-    '<div style="display:flex;gap:4px;flex-wrap:wrap">'+
+    '<div style="font-size:13px;font-weight:600;margin-bottom:4px">📁 Data Management</div>'+
+    '<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px">'+
     '<button class="b" onclick="exportJSON()">↓ Export JSON</button>'+
-    '<button class="b" onclick="importJSON()">↑ Import JSON</button>'+
+    '<button class="b bp" onclick="importJSON()">↑ Import JSON</button>'+
     '<button class="b" onclick="exportCSV()">↓ Export CSV</button>'+
     '<button class="b br" onclick="resetAll()">⚠ Reset All</button>'+
-    '</div></div>';
+    '</div>'+
+    '<div class="sl" style="margin-bottom:6px;line-height:1.4">'+
+    '💡 <strong>Importing v1.5 data?</strong> Auto-migration built-in! Just import your JSON.'+
+    '</div>'+
+    '<div style="padding:8px;background:var(--bg2);border-radius:4px;font-family:monospace;font-size:10px;margin-bottom:6px">'+
+    '<div><strong>Current Data:</strong></div>'+
+    '<div>Holdings: '+STATE.holdings.length+'</div>'+
+    '<div>Accounts: '+STATE.accounts.length+'</div>'+
+    '<div>RESP: '+STATE.resp.length+'</div>'+
+    '<div>Other: '+STATE.other.length+'</div>'+
+    '<div>Pending Trades: '+STATE.pendingTrades.length+'</div>'+
+    '</div>'+
+    '<button class="b bs" onclick="testLocalStorage()">🧪 Test localStorage</button>'+
+    '</div>';
   
   h+='<div class="c">'+
     '<div style="font-size:13px;font-weight:600;margin-bottom:3px">📱 iPhone</div>'+
@@ -2042,11 +2210,41 @@ function importJSON(){
     var reader=new FileReader();
     reader.onload=function(ev){
       try{
-        applyData(JSON.parse(ev.target.result));
-        toast("Imported!");
-        setTimeout(function(){location.reload()},600);
+        console.log("📥 Importing JSON...");
+        var data=JSON.parse(ev.target.result);
+        console.log("📋 Parsed data keys:",Object.keys(data));
+        
+        // Apply without auto-save, then save manually
+        applyData(data,true);
+        
+        // Force immediate save to localStorage
+        console.log("💾 Saving to localStorage...");
+        SJ("holdings",STATE.holdings);
+        SJ("resp",STATE.resp);
+        SJ("accounts",STATE.accounts);
+        SJ("other",STATE.other);
+        SJ("budget",STATE.budget);
+        SJ("txnLog",STATE.txnLog);
+        SJ("pendingTrades",STATE.pendingTrades);
+        SJ("auditLog",STATE.auditLog);
+        SJ("priceCache",STATE.priceCache);
+        SJ("fxRate",STATE.fxRate);
+        SJ("fxLastUpdate",STATE.fxLastUpdate);
+        SJ("dividends",STATE.dividends);
+        
+        console.log("✅ Data saved! Counts - Holdings:",STATE.holdings.length,"Accounts:",STATE.accounts.length);
+        
+        toast("Imported! Reloading in 2s...");
+        
+        // Longer delay to ensure save completes
+        setTimeout(function(){
+          console.log("🔄 Reloading page...");
+          location.reload();
+        },2000);
+        
       }catch(ex){
-        toast("Invalid JSON");
+        console.error("❌ Import failed:",ex);
+        toast("Invalid JSON: "+ex.message);
       }
     };
     reader.readAsText(e.target.files[0]);
@@ -2068,6 +2266,42 @@ function exportCSV(){
   toast("Exported");
 }
 
+function testLocalStorage(){
+  try{
+    console.log("🧪 Testing localStorage...");
+    
+    // Test write
+    localStorage.setItem("fc2_test","test_value");
+    
+    // Test read
+    var val=localStorage.getItem("fc2_test");
+    
+    if(val==="test_value"){
+      console.log("✅ localStorage working!");
+      
+      // Check current data
+      var holdings=localStorage.getItem("fc2_holdings");
+      var accounts=localStorage.getItem("fc2_accounts");
+      
+      console.log("📊 Stored data:");
+      console.log("- Holdings:",holdings?JSON.parse(holdings).length:"none");
+      console.log("- Accounts:",accounts?JSON.parse(accounts).length:"none");
+      
+      toast("localStorage working! Check console for details");
+    }else{
+      console.error("❌ localStorage test failed - read mismatch");
+      toast("localStorage test FAILED");
+    }
+    
+    // Cleanup
+    localStorage.removeItem("fc2_test");
+    
+  }catch(e){
+    console.error("❌ localStorage error:",e);
+    toast("localStorage ERROR: "+e.message);
+  }
+}
+
 function resetAll(){
   if(!confirm("Reset ALL data? This cannot be undone!"))return;
   if(!confirm("Are you absolutely sure?"))return;
@@ -2076,14 +2310,26 @@ function resetAll(){
 }
 
 // ═══ INIT ═══
+console.log("=== FC 2.0 Initializing ===");
+console.log("Holdings:",STATE.holdings.length);
+console.log("Accounts:",STATE.accounts.length);
+console.log("RESP:",STATE.resp.length);
+console.log("GitHub Token:",CONFIG.ghToken?"Set":"Not set");
+console.log("Gist ID:",CONFIG.gistId||"Not set");
+
 checkGmailCallback();
 initNav();
 
 if(CONFIG.ghToken&&CONFIG.gistId){
+  console.log("Attempting Gist pull...");
   pullFromGist().then(function(ok){
     if(ok){
+      console.log("Gist pull successful!");
+      toast("Synced from GitHub!");
       recalc();
       initNav();
+    }else{
+      console.warn("Gist pull failed or no data");
     }
   });
 }
