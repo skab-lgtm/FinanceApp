@@ -7,7 +7,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Finance">
 <meta name="theme-color" content="#05080f">
-<title>Financial Command Center 2.0</title>
+<title>Financial Command Center 2.5</title>
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
 [data-theme="dark"]{--bg:#05080f;--bg2:#0a0f1a;--cd:#0f1525;--cd2:#151d30;--bd:#1a2540;--bd2:#253558;--tx:#dfe8f5;--mt:#6b7fa0;--ac:#00e5c8;--ac2:#0a3a35;--gn:#00d68f;--gn2:#053527;--rd:#ff5c72;--rd2:#3d1520;--gl:#ffb547;--pu:#9b7dff;--bl:#4d9fff}
@@ -44,6 +44,24 @@ input:focus,select:focus{border-color:var(--ac)}
 .fl{font-size:8px;color:var(--mt);font-weight:600;text-transform:uppercase;letter-spacing:.4px;margin-bottom:2px;display:block}
 .fg{display:flex;flex-direction:column;margin-bottom:4px}
 .sr{display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--bd);font-size:11px;align-items:center}.sr:last-child{border-bottom:none}
+.budget-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-top:8px}
+@media(max-width:800px){.budget-grid{grid-template-columns:1fr}}
+.budget-item{background:var(--bg2);border-radius:6px;padding:8px;border:1px solid var(--bd)}
+.budget-item-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.budget-item-name{font-weight:600;font-size:12px;color:var(--tx)}
+.budget-item-row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:6px}
+.budget-field{background:var(--bg);border-radius:4px;padding:4px 6px}
+.budget-field-label{font-size:9px;color:var(--mt);margin-bottom:2px}
+.budget-field-value{font-size:11px;font-weight:600;font-family:'JetBrains Mono',monospace}
+.budget-field input{width:100%;background:transparent;border:none;color:var(--tx);font-size:11px;font-weight:600;font-family:'JetBrains Mono',monospace;padding:2px 0}
+.budget-field input:focus{outline:none}
+.budget-status{display:inline-block;padding:2px 8px;border-radius:3px;font-size:9px;font-weight:600;text-transform:uppercase}
+.budget-status.on-track{background:var(--gn);color:#000}
+.budget-status.over{background:var(--rd);color:#fff}
+.budget-progress{margin-top:4px}
+.budget-progress-bar{height:6px;background:var(--bd);border-radius:3px;overflow:hidden}
+.budget-progress-fill{height:100%;transition:width .3s,background .3s}
+.budget-progress-text{font-size:9px;color:var(--mt);margin-top:2px}
 .ar{padding:4px 6px;border-radius:3px;background:var(--bg);margin-bottom:2px;transition:background .3s}
 .bi{display:flex;align-items:center;gap:3px;padding:2px 4px;border-radius:3px;background:var(--bg);font-size:9px;transition:background .3s}
 .bi label{color:var(--mt);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -77,7 +95,7 @@ input:focus,select:focus{border-color:var(--ac)}
 <div class="hd">
 <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px">
 <div>
-<h1>Financial Command Center 2.0</h1>
+<h1>Financial Command Center 2.5</h1>
 <div class="sub">
 <span class="dot" id="sd"></span> 
 <span id="stx">Loading...</span> 
@@ -1847,19 +1865,6 @@ window.renderFunctions.budget=function(){
   var actuals=STATE.budget.actuals||{};
   var takeHome=STATE.budget.takeHome||0;
   
-  var h='<div class="c" style="margin-bottom:8px">'+
-    '<div class="fg"><label class="fl">Monthly Take-Home</label>'+
-    '<input type="number" value="'+takeHome+'" onchange="STATE.budget.takeHome=Number(this.value);save()" class="mn">'+
-    '</div></div>';
-  
-  h+='<div class="c" style="margin-bottom:8px">'+
-    '<div class="lb">Add Budget Item</div>'+
-    '<div style="display:grid;grid-template-columns:1fr 1fr auto;gap:4px;align-items:end">'+
-    '<div class="fg"><label class="fl">Name</label><input id="bn"></div>'+
-    '<div class="fg"><label class="fl">Budgeted</label><input id="ba" type="number"></div>'+
-    '<button class="b bp" onclick="addBudget()">+</button>'+
-    '</div></div>';
-  
   var keys=Object.keys(items);
   var totalBudget=0;
   var totalActual=0;
@@ -1869,29 +1874,65 @@ window.renderFunctions.budget=function(){
     totalActual+=actuals[keys[i]]||0;
   }
   
-  h+='<div class="c"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">'+
-    '<div class="lb">Budget Items</div>'+
-    '<div class="sl">Remaining: $'+F(takeHome-totalBudget,0)+'</div>'+
-    '</div>';
+  var remaining=takeHome-totalBudget;
+  
+  // Header with take-home and remaining
+  var h='<div class="c" style="margin-bottom:12px;background:var(--bg2);border:1px solid var(--bd)">'+
+    '<div style="font-size:13px;font-weight:600;margin-bottom:8px">Dashboard Summary</div>'+
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">'+
+    '<div><div style="font-size:10px;color:var(--mt);margin-bottom:2px">MONTHLY TAKE-HOME</div>'+
+    '<input type="number" value="'+takeHome+'" onchange="STATE.budget.takeHome=Number(this.value);save();window.renderFunctions.budget()" '+
+    'style="width:100%;font-size:16px;font-weight:600;background:var(--bg);border:1px solid var(--bd);'+
+    'border-radius:4px;padding:6px;color:var(--tx);font-family:\'JetBrains Mono\',monospace" class="mn"></div>'+
+    '<div style="text-align:right"><div style="font-size:10px;color:var(--mt);margin-bottom:2px">'+
+    'REMAINING TO BUDGET</div><div style="font-size:20px;font-weight:700;color:'+(remaining<0?'var(--rd)':'var(--gn)')+
+    '">$'+F(Math.abs(remaining),0)+'</div></div>'+
+    '</div></div>';
+  
+  // Add new item
+  h+='<div class="c" style="margin-bottom:12px;background:var(--bg2);border:1px solid var(--bd)">'+
+    '<div style="font-size:11px;font-weight:600;color:var(--mt);margin-bottom:6px">ADD NEW ITEM</div>'+
+    '<div style="display:grid;grid-template-columns:2fr 1fr 1fr auto;gap:6px;align-items:end">'+
+    '<input id="bn" placeholder="Item Name" style="padding:6px;background:var(--bg);border:1px solid var(--bd);'+
+    'border-radius:4px;color:var(--tx);font-size:11px">'+
+    '<input id="ba" type="number" placeholder="Budgeted $" style="padding:6px;background:var(--bg);'+
+    'border:1px solid var(--bd);border-radius:4px;color:var(--tx);font-size:11px" class="mn">'+
+    '<input id="bac" type="number" placeholder="Actual $" style="padding:6px;background:var(--bg);'+
+    'border:1px solid var(--bd);border-radius:4px;color:var(--tx);font-size:11px" class="mn">'+
+    '<button class="b bp" onclick="addBudget()" style="height:30px;font-size:16px">+</button>'+
+    '</div></div>';
+  
+  // Budget items grid
+  h+='<div class="budget-grid">';
   
   for(i=0;i<keys.length;i++){
     var name=keys[i];
     var budg=items[name]||0;
     var act=actuals[name]||0;
     var pct=budg?(act/budg)*100:0;
+    var status=pct>100?"OVER":"ON TRACK";
+    var statusClass=pct>100?"over":"on-track";
     
-    h+='<div class="ar">'+
-      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1px">'+
-      '<span style="font-weight:600;font-size:10px">'+esc(name)+'</span>'+
-      '<button class="b bs br" style="padding:1px 4px;font-size:10px" onclick="deleteBudget(\''+esc(name)+'\')">✕</button>'+
+    h+='<div class="budget-item">'+
+      '<div class="budget-item-header">'+
+      '<div class="budget-item-name">'+esc(name)+'</div>'+
+      '<div style="display:flex;gap:4px;align-items:center">'+
+      '<button class="b bs" onclick="editBudgetItem(\''+esc(name)+'\')" style="padding:2px 6px;font-size:10px">✎</button>'+
+      '<button class="b bs br" onclick="deleteBudget(\''+esc(name)+'\')" style="padding:2px 6px;font-size:10px">✕</button>'+
+      '</div></div>'+
+      '<div class="budget-item-row">'+
+      '<div class="budget-field"><div class="budget-field-label">Budget</div>'+
+      '<input type="number" value="'+budg+'" onchange="STATE.budget.items[\''+esc(name)+'\']=Number(this.value);save();window.renderFunctions.budget()" class="budget-field-value mn"></div>'+
+      '<div class="budget-field"><div class="budget-field-label">Actual</div>'+
+      '<input type="number" value="'+act+'" onchange="STATE.budget.actuals[\''+esc(name)+'\']=Number(this.value);save();window.renderFunctions.budget()" class="budget-field-value mn"></div>'+
+      '<div class="budget-field" style="display:flex;align-items:center;justify-content:center">'+
+      '<span class="budget-status '+statusClass+'">'+status+'</span></div>'+
       '</div>'+
-      '<div style="display:flex;gap:4px;align-items:center;margin-bottom:1px">'+
-      '<div class="bi" style="flex:1"><label style="font-size:8px">Budget</label><input type="number" value="'+budg+'" onchange="STATE.budget.items[\''+esc(name)+'\']=Number(this.value);save();window.renderFunctions.budget()" class="mn" style="font-size:9px;padding:2px"></div>'+
-      '<div class="bi" style="flex:1"><label style="font-size:8px">Actual</label><input type="number" value="'+act+'" onchange="STATE.budget.actuals[\''+esc(name)+'\']=Number(this.value);save();window.renderFunctions.budget()" class="mn" style="font-size:9px;padding:2px"></div>'+
-      '</div>'+
-      '<div class="pr" style="height:4px;margin:2px 0"><div class="pf" style="width:'+Math.min(pct,100)+'%;background:'+(pct>100?'var(--rd)':pct>80?'var(--gl)':'var(--gn)')+'"></div></div>'+
-      '<div class="sl" style="margin-top:0;font-size:8px">$'+F(act,0)+' / $'+F(budg,0)+' ('+F(pct,0)+'%)</div>'+
-      '</div>';
+      '<div class="budget-progress">'+
+      '<div class="budget-progress-bar"><div class="budget-progress-fill" style="width:'+Math.min(pct,100)+'%;'+
+      'background:'+(pct>100?'var(--rd)':pct>80?'var(--gl)':'var(--gn)')+'"></div></div>'+
+      '<div class="budget-progress-text">$'+F(act,0)+' / $'+F(budg,0)+' ('+F(pct,0)+'%)</div>'+
+      '</div></div>';
   }
   
   h+='</div>';
@@ -1901,12 +1942,15 @@ window.renderFunctions.budget=function(){
 
 function addBudget(){
   var name=document.getElementById("bn").value.trim();
-  var amt=parseFloat(document.getElementById("ba").value)||0;
+  var budgeted=parseFloat(document.getElementById("ba").value)||0;
+  var actual=parseFloat(document.getElementById("bac").value)||0;
   if(!name)return;
   
-  STATE.budget.items[name]=amt;
+  STATE.budget.items[name]=budgeted;
+  STATE.budget.actuals[name]=actual;
   document.getElementById("bn").value="";
   document.getElementById("ba").value="";
+  document.getElementById("bac").value="";
   save();
   window.renderFunctions.budget();
 }
