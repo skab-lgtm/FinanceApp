@@ -99,7 +99,7 @@ input:focus,select:focus{border-color:var(--ac)}
 <div class="sub">
 <span class="dot" id="sd"></span> 
 <span id="stx">Loading...</span> 
-<span style="color:var(--ac);margin-left:8px">v2.6.0</span>
+<span style="color:var(--ac);margin-left:8px">v2.6.1</span>
 </div>
 </div>
 <div style="display:flex;align-items:center;gap:10px">
@@ -163,6 +163,7 @@ var STATE = {
 // ═══ SETTINGS ═══
 var CONFIG = {
   alphaVantageKey: LJ("avKey","8ZINHBVZWB3CVXLZ"),
+  finnhubKey: "d797m3pr01qqpmhfosigd797m3pr01qqpmhfosj0",
   gmailClientId: LJ("gmailCid",""),
   gmailToken: LJ("gmailTk",""),
   ghToken: LJ("ghToken",""),
@@ -385,10 +386,25 @@ async function fetchPrice(symbol){
     return null;
   }
   
-  // Check cache (valid for 15 minutes)
-  var cached=STATE.priceCache[symbol];
+  // Symbol mapping - translate user symbols to API symbols
+  var symbolMap={
+    "QQC-T":"QQC.TO",
+    "VFV":"VFV.TO",
+    "CSU":"CSU.TO",
+    "DFN-A":"DFN-A.TO",
+    "XEQT":"XEQT.TO"
+  };
+  
+  var originalSymbol=symbol;
+  if(symbolMap[symbol]){
+    symbol=symbolMap[symbol];
+    console.log("📌 Symbol mapped:",originalSymbol,"→",symbol);
+  }
+  
+  // Check cache (valid for 15 minutes) - use original symbol as key
+  var cached=STATE.priceCache[originalSymbol];
   if(cached && Date.now()-new Date(cached.timestamp).getTime()<900000){
-    console.log("📦 Using cached price for",symbol,"("+formatDate(cached.timestamp)+")");
+    console.log("📦 Using cached price for",originalSymbol,"("+formatDate(cached.timestamp)+")");
     return {price:cached.price,currency:cached.currency,fromCache:true};
   }
   
@@ -403,8 +419,8 @@ async function fetchPrice(symbol){
     var isCadStock=false;
     
     // Canadian stock indicators - NOTE: AMD removed from this list as it's US stock
-    if(symbol.includes("-UN")||symbol.includes("-T")||symbol.includes("-A")||
-       ["GSY","TD","BNS","ENB","BMO","TF","T","CPX","WCP","NA","CNQ","CM","MFC","QQC-T","XEQT"].indexOf(symbol)>=0){
+    if(symbol.includes("-UN")||symbol.includes("-T")||symbol.includes("-A")||symbol.includes(".TO")||
+       ["GSY","TD","BNS","ENB","BMO","TF","T","CPX","WCP","NA","CNQ","CM","MFC","XEQT","VFV","CSU","QQC"].indexOf(symbol.replace(".TO",""))>=0){
       isCadStock=true;
       // Add .TO for TSX if not already present
       if(!symbol.endsWith(".TO")&&!symbol.includes(".")){
@@ -418,7 +434,7 @@ async function fetchPrice(symbol){
       apiSymbol=symbol;
     }
     
-    console.log("🔍 Fetching fresh price for",symbol,"using API symbol:",apiSymbol);
+    console.log("🔍 Fetching fresh price for",originalSymbol,"using API symbol:",apiSymbol);
     
     var url="https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol="+encodeURIComponent(apiSymbol)+"&apikey="+CONFIG.alphaVantageKey;
     var r=await fetch(url);
@@ -428,9 +444,9 @@ async function fetchPrice(symbol){
       var price=parseFloat(d["Global Quote"]["05. price"]);
       var currency=isCadStock?"CAD":"USD";
       
-      console.log("✅ Fresh price fetched:",symbol,"=","$"+price,currency);
+      console.log("✅ Fresh price fetched:",originalSymbol,"=","$"+price,currency);
       
-      STATE.priceCache[symbol]={
+      STATE.priceCache[originalSymbol]={
         price: price,
         currency: currency,
         timestamp: new Date().toISOString()
@@ -439,14 +455,14 @@ async function fetchPrice(symbol){
       document.getElementById("sd").className="dot dot-g";
       return {price:price,currency:currency,fromCache:false};
     }else if(d.Note && d.Note.includes("API call frequency")){
-      console.warn("⚠️ Rate limited for",symbol,"- using last known price");
+      console.warn("⚠️ Rate limited for",originalSymbol,"- using last known price");
       toast("API limit reached - using cached prices");
       // Return last known price instead of null
       if(lastKnownPrice){
         return {price:lastKnownPrice.price,currency:lastKnownPrice.currency,fromCache:true,stale:true};
       }
     }else if(d.Note && d.Note.includes("premium")){
-      console.warn("⚠️ Premium endpoint required for",symbol,"- using last known price");
+      console.warn("⚠️ Premium endpoint required for",originalSymbol,"- using last known price");
       if(lastKnownPrice){
         return {price:lastKnownPrice.price,currency:lastKnownPrice.currency,fromCache:true,stale:true};
       }
@@ -459,7 +475,7 @@ async function fetchPrice(symbol){
       }
     }
   }catch(e){
-    console.error("❌ Price fetch failed for "+symbol+":",e);
+    console.error("❌ Price fetch failed for "+originalSymbol+":",e);
     document.getElementById("sd").className="dot dot-r";
     // Return last known price on error
     if(lastKnownPrice){
@@ -470,13 +486,63 @@ async function fetchPrice(symbol){
   return null;
 }
 
+// ═══ FINNHUB API - BATCH FETCHING ═══
+async function fetchPriceFinnhub(symbols){
+  if(!CONFIG.finnhubKey){
+    console.warn("No Finnhub API key configured");
+    return {};
+  }
+  
+  var results={};
+  
+  // Finnhub doesn't support batch - call individually but faster
+  for(var i=0;i<symbols.length;i++){
+    var symbol=symbols[i];
+    
+    // Apply symbol mapping
+    var symbolMap={
+      "QQC-T":"QQC.TO",
+      "VFV":"VFV.TO",
+      "CSU":"CSU.TO",
+      "DFN-A":"DFN-A.TO",
+      "XEQT":"XEQT.TO"
+    };
+    
+    var apiSymbol=symbolMap[symbol]||symbol;
+    
+    try{
+      var url="https://finnhub.io/api/v1/quote?symbol="+encodeURIComponent(apiSymbol)+"&token="+CONFIG.finnhubKey;
+      var r=await fetch(url);
+      var d=await r.json();
+      
+      if(d.c && d.c>0){  // d.c = current price
+        var isCadStock=apiSymbol.includes(".TO")||apiSymbol.includes("-T")||apiSymbol.includes("-UN")||apiSymbol.includes("-A");
+        results[symbol]={
+          price:d.c,
+          currency:isCadStock?"CAD":"USD"
+        };
+        console.log("✅ Finnhub:",symbol,"=","$"+d.c);
+      }
+    }catch(e){
+      console.error("Finnhub fetch failed for",symbol,":",e);
+    }
+    
+    // Small delay to avoid rate limit
+    if(i<symbols.length-1){
+      await new Promise(resolve=>setTimeout(resolve,100));
+    }
+  }
+  
+  return results;
+}
+
 async function refreshPrices(){
-  if(!CONFIG.alphaVantageKey){
-    toast("Set Alpha Vantage API key in Settings first");
+  if(!CONFIG.alphaVantageKey && !CONFIG.finnhubKey){
+    toast("Set API key in Settings first");
     return;
   }
   
-  toast("Fetching prices (max 25/day)...");
+  toast("Fetching prices...");
   var symbolMap={};  // Track which holdings/resp use which symbol
   
   // Collect symbols from holdings with their total value for prioritization
@@ -510,54 +576,98 @@ async function refreshPrices(){
   
   console.log("🔄 Refreshing prices for",symbolList.length,"symbols (prioritizing by value)");
   
-  // Fetch up to 25 symbols (API daily limit on free tier)
+  // Try Finnhub batch first for all symbols (faster, no daily limit)
+  var symbols=symbolList.map(function(s){return s.symbol});
+  var limit=Math.min(symbols.length,25);
+  var targetSymbols=symbols.slice(0,limit);
+  
+  toast("Trying Finnhub batch fetch for "+targetSymbols.length+" symbols...");
+  var finnhubResults=await fetchPriceFinnhub(targetSymbols);
+  
   var updated=0;
   var failed=0;
-  var limit=Math.min(symbolList.length,25);
+  var timestamp=new Date().toISOString();
   
-  for(i=0;i<limit;i++){
-    var sym=symbolList[i].symbol;
-    console.log("Fetching "+(i+1)+"/"+limit+":",sym,"($"+Math.round(symbolList[i].data.totalValue)+")");
-    
-    var result=await fetchPrice(sym);
-    if(result){
-      // Update ALL holdings with this symbol
+  // Apply Finnhub results
+  for(i=0;i<targetSymbols.length;i++){
+    sym=targetSymbols[i];
+    if(finnhubResults[sym]){
+      // Update cache
+      STATE.priceCache[sym]={
+        price:finnhubResults[sym].price,
+        currency:finnhubResults[sym].currency,
+        timestamp:timestamp
+      };
+      
+      // Update holdings
       var indices=symbolMap[sym].holdings;
       for(var j=0;j<indices.length;j++){
-        STATE.holdings[indices[j]].p=result.price;
-        STATE.holdings[indices[j]].priceUpdated=new Date().toISOString();
-        STATE.holdings[indices[j]].priceStale=result.stale||false;
+        STATE.holdings[indices[j]].p=finnhubResults[sym].price;
+        STATE.holdings[indices[j]].priceUpdated=timestamp;
+        STATE.holdings[indices[j]].priceStale=false;
       }
       
-      // Update ALL RESP positions with this symbol
+      // Update RESP
       indices=symbolMap[sym].resp;
       for(j=0;j<indices.length;j++){
-        STATE.resp[indices[j]].p=result.price;
-        STATE.resp[indices[j]].priceUpdated=new Date().toISOString();
-        STATE.resp[indices[j]].priceStale=result.stale||false;
+        STATE.resp[indices[j]].p=finnhubResults[sym].price;
+        STATE.resp[indices[j]].priceUpdated=timestamp;
+        STATE.resp[indices[j]].priceStale=false;
       }
       
-      if(result.stale){
-        console.log("⚠️ Using stale price for",sym);
-        failed++;
-      }else{
-        updated++;
-      }
+      updated++;
     }else{
       failed++;
     }
+  }
+  
+  // If Finnhub failed for some, try Alpha Vantage for top failures (max 5 due to rate limit)
+  if(failed>0 && CONFIG.alphaVantageKey){
+    toast("Finnhub incomplete, trying Alpha Vantage for "+Math.min(failed,5)+" symbols...");
+    var failedSymbols=[];
+    for(i=0;i<targetSymbols.length;i++){
+      if(!finnhubResults[targetSymbols[i]]){
+        failedSymbols.push(targetSymbols[i]);
+      }
+    }
     
-    // Wait 12 seconds between calls (5 per minute max)
-    if(i<limit-1){
-      toast("Fetching... "+(i+1)+"/"+limit+" (waiting 12s)");
-      await new Promise(resolve=>setTimeout(resolve,12000));
+    for(i=0;i<Math.min(failedSymbols.length,5);i++){
+      sym=failedSymbols[i];
+      console.log("Alpha Vantage fallback "+(i+1)+"/"+Math.min(failedSymbols.length,5)+":",sym);
+      
+      var result=await fetchPrice(sym);
+      if(result && !result.stale){
+        // Update holdings
+        indices=symbolMap[sym].holdings;
+        for(j=0;j<indices.length;j++){
+          STATE.holdings[indices[j]].p=result.price;
+          STATE.holdings[indices[j]].priceUpdated=timestamp;
+          STATE.holdings[indices[j]].priceStale=false;
+        }
+        
+        // Update RESP
+        indices=symbolMap[sym].resp;
+        for(j=0;j<indices.length;j++){
+          STATE.resp[indices[j]].p=result.price;
+          STATE.resp[indices[j]].priceUpdated=timestamp;
+          STATE.resp[indices[j]].priceStale=false;
+        }
+        
+        updated++;
+        failed--;
+      }
+      
+      // Wait 12 seconds between Alpha Vantage calls (5 per minute max)
+      if(i<Math.min(failedSymbols.length,5)-1){
+        await new Promise(resolve=>setTimeout(resolve,12000));
+      }
     }
   }
   
   save();
-  var msg=updated+" fresh, "+failed+" cached/failed";
-  if(symbolList.length>25){
-    msg+=" ("+symbolList.length+" total - showing top 25)";
+  var msg=updated+" updated, "+failed+" failed/cached";
+  if(symbolList.length>limit){
+    msg+=" ("+symbolList.length+" total - top "+limit+" fetched)";
   }
   toast(msg);
   recalc();
@@ -1786,17 +1896,40 @@ window.renderFunctions.resp=function(){
     respTotal+=value;
     respCost+=cost;
     
-    h+='<tr>'+
-      '<td style="font-weight:600;color:var(--ac)">'+r.s+'</td>'+
-      '<td class="mn">$'+F(price,2)+'<span style="font-size:8px;color:var(--mt);margin-left:3px">'+currLabel+'</span>'+priceTimestamp+'</td>'+
-      '<td class="mn">'+F(r.n,2)+'</td>'+
-      '<td class="mn">$'+F(r.c,2)+'</td>'+
-      '<td class="mn">$'+F(value,0)+'</td>'+
-      '<td class="mn '+pcl(pl)+'">$'+F(pl,0)+'</td>'+
-      '<td class="mn '+pcl(plPct)+'">'+FP(plPct)+'</td>'+
-      '<td><span class="bg" style="background:'+kColor+'22;color:'+kColor+'">'+r.k+'</span></td>'+
-      '<td><button class="b bs br" onclick="deleteRESP('+i+')">✕</button></td>'+
-      '</tr>';
+    // Edit mode
+    if(UI.editIdx===i && UI.curTab==="resp"){
+      h+='<tr style="background:var(--bg2)"><td colspan="9">'+
+        '<div style="display:grid;grid-template-columns:repeat(6,1fr) auto;gap:3px;padding:4px;align-items:end">'+
+        '<div class="fg"><label class="fl">Sym</label><input id="ers" value="'+esc(r.s)+'" style="width:55px"></div>'+
+        '<div class="fg"><label class="fl">Curr</label><select id="ert"><option value="C"'+(r.t==="C"?" selected":"")+'>CAD</option>'+
+        '<option value="U"'+(r.t==="U"?" selected":"")+'>USD</option></select></div>'+
+        '<div class="fg"><label class="fl">Cost</label><input id="erc" type="number" value="'+r.c+'" style="width:60px"></div>'+
+        '<div class="fg"><label class="fl">Qty</label><input id="ern" type="number" value="'+r.n+'" style="width:55px"></div>'+
+        '<div class="fg"><label class="fl">Price</label><input id="erp" type="number" value="'+price+'" style="width:60px"></div>'+
+        '<div class="fg"><label class="fl">Type</label><select id="erk">'+
+        '<option'+(r.k==="Growth"?" selected":"")+'>Growth</option>'+
+        '<option'+(r.k==="Dividend"?" selected":"")+'>Dividend</option>'+
+        '<option'+(r.k==="ETF"?" selected":"")+'>ETF</option>'+
+        '</select></div>'+
+        '<div style="display:flex;gap:2px">'+
+        '<button class="b bp bs" onclick="saveRESPEdit('+i+')">✓</button>'+
+        '<button class="b bs" onclick="UI.editIdx=-1;window.renderFunctions.resp()">✕</button>'+
+        '</div></div></td></tr>';
+    }else{
+      h+='<tr>'+
+        '<td style="font-weight:600;color:var(--ac)">'+r.s+'</td>'+
+        '<td class="mn">$'+F(price,2)+'<span style="font-size:8px;color:var(--mt);margin-left:3px">'+currLabel+'</span>'+priceTimestamp+'</td>'+
+        '<td class="mn">'+F(r.n,2)+'</td>'+
+        '<td class="mn">$'+F(r.c,2)+'</td>'+
+        '<td class="mn">$'+F(value,0)+'</td>'+
+        '<td class="mn '+pcl(pl)+'">$'+F(pl,0)+'</td>'+
+        '<td class="mn '+pcl(plPct)+'">'+FP(plPct)+'</td>'+
+        '<td><span class="bg" style="background:'+kColor+'22;color:'+kColor+'">'+r.k+'</span></td>'+
+        '<td style="display:flex;gap:2px">'+
+        '<button class="b bs" onclick="UI.editIdx='+i+';UI.curTab=\'resp\';window.renderFunctions.resp()">✎</button>'+
+        '<button class="b bs br" onclick="deleteRESP('+i+')">✕</button>'+
+        '</td></tr>';
+    }
   }
   
   h+='</tbody><tfoot><tr style="font-weight:700;background:var(--bg2)">'+
@@ -1831,6 +1964,32 @@ function addRESP(){
   
   save();
   toast("Added "+sym);
+  recalc();
+}
+
+function saveRESPEdit(idx){
+  var sym=document.getElementById("ers").value.trim().toUpperCase();
+  var curr=document.getElementById("ert").value;
+  var cost=parseFloat(document.getElementById("erc").value);
+  var qty=parseFloat(document.getElementById("ern").value);
+  var price=parseFloat(document.getElementById("erp").value);
+  var kind=document.getElementById("erk").value;
+  
+  if(!sym||!cost||!qty){
+    toast("Fill all fields");
+    return;
+  }
+  
+  STATE.resp[idx].s=sym;
+  STATE.resp[idx].t=curr;
+  STATE.resp[idx].c=cost;
+  STATE.resp[idx].n=qty;
+  STATE.resp[idx].p=price;
+  STATE.resp[idx].k=kind;
+  
+  UI.editIdx=-1;
+  save();
+  toast("Updated "+sym);
   recalc();
 }
 
@@ -2155,11 +2314,33 @@ function deleteOther(idx){
 
 // ACCOUNTS
 window.renderFunctions.accounts=function(){
+  // Get all unique account types from existing accounts
+  var existingTypes={};
+  for(var x=0;x<STATE.accounts.length;x++){
+    existingTypes[STATE.accounts[x].tp]=true;
+  }
+  var typeList=Object.keys(existingTypes);
+  
+  // Add standard types if not present
+  var standardTypes=["TFSA","RRSP","RESP","Non-Reg","RDSP","Savings"];
+  for(var st=0;st<standardTypes.length;st++){
+    if(!existingTypes[standardTypes[st]]){
+      typeList.push(standardTypes[st]);
+    }
+  }
+  
   var h='<div class="c" style="margin-bottom:8px">'+
     '<div class="lb">Add Account</div>'+
     '<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr auto;gap:4px;align-items:end">'+
     '<div class="fg"><label class="fl">Label</label><input id="al"></div>'+
-    '<div class="fg"><label class="fl">Type</label><select id="at"><option>TFSA</option><option>RRSP</option><option>RESP</option><option>Non-Reg</option></select></div>'+
+    '<div class="fg"><label class="fl">Type</label><select id="at" onchange="if(this.value===\'__custom__\'){var c=prompt(\'Enter custom type:\');if(c){this.value=c;var o=document.createElement(\'option\');o.value=c;o.text=c;this.add(o,this.options.length-1)}else{this.value=\'TFSA\'}}">';
+  
+  // Add all types
+  for(var t=0;t<typeList.length;t++){
+    h+='<option>'+esc(typeList[t])+'</option>';
+  }
+  h+='<option value="__custom__">+ Custom Type...</option>'+
+    '</select></div>'+
     '<div class="fg"><label class="fl">CAD Cash</label><input id="ac" type="number" step="0.01"></div>'+
     '<div class="fg"><label class="fl">USD Cash</label><input id="au" type="number" step="0.01"></div>'+
     '<button class="b bp" onclick="addAcct()">+</button>'+
@@ -2179,12 +2360,14 @@ window.renderFunctions.accounts=function(){
     if(UI.editIdx===i && UI.curTab==="accounts"){
       h+='<tr style="background:var(--bg2)">'+
         '<td><input id="eal" value="'+esc(a.l)+'" style="width:100%"></td>'+
-        '<td><select id="eat" style="width:100px">'+
-        '<option'+(a.tp==="TFSA"?" selected":"")+'>TFSA</option>'+
-        '<option'+(a.tp==="RRSP"?" selected":"")+'>RRSP</option>'+
-        '<option'+(a.tp==="RESP"?" selected":"")+'>RESP</option>'+
-        '<option'+(a.tp==="Non-Reg"?" selected":"")+'>Non-Reg</option>'+
-        '</select></td>'+
+        '<td><select id="eat" style="width:100px">';
+      
+      // Add all types to edit dropdown too
+      for(t=0;t<typeList.length;t++){
+        h+='<option'+(a.tp===typeList[t]?" selected":"")+'>'+esc(typeList[t])+'</option>';
+      }
+      
+      h+='</select></td>'+
         '<td><input id="eac" type="number" step="0.01" value="'+(a.cc||0)+'" style="width:100px" class="mn"></td>'+
         '<td><input id="eau" type="number" step="0.01" value="'+(a.cu||0)+'" style="width:100px" class="mn"></td>'+
         '<td class="mn">$'+F(cash,0)+'</td>'+
